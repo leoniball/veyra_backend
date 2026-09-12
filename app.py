@@ -87,11 +87,16 @@ class Loan(db.Model):
 def register():
     data = request.get_json()
     
-    # Validación estricta de campos obligatorios
+    # Validación estricta y mejorada de campos obligatorios
     required_fields = ['name', 'email', 'password', 'documentId']
-    if not data or not all(data.get(field) for field in required_fields):
-        return jsonify({'error': 'Faltan datos obligatorios (name, email, password, documentId)'}), 400
+    
+    if not data:
+        return jsonify({'error': 'No se enviaron datos JSON'}), 400
         
+    for field in required_fields:
+        if field not in data or str(data.get(field)).strip() == "":
+            return jsonify({'error': f'El campo obligatorio "{field}" falta o está vacío'}), 400
+            
     if User.query.filter_by(email=data['email']).first():
         return jsonify({'error': 'El correo ya está registrado'}), 409
         
