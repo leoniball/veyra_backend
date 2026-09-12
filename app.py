@@ -6,21 +6,25 @@ from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 from dotenv import load_dotenv
-from flask_cors import CORS # <-- 1. AGREGA ESTA LÍNEA
+from flask_cors import CORS
 
+# Cargar variables de entorno locales (Render usará las suyas automáticamente)
 load_dotenv()
 
 app = Flask(__name__)
-app = Flask(__name__)
-CORS(app) # <-- 2. AGREGA ESTA LÍNEA PARA PERMITIR PETICIONES EXTERNAS
+# Configuración CORS estricta para producción
+CORS(app, resources={r"/api/*": {"origins": "*"}})
 
+# Configuración de la base de datos y seguridad
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'clave_secreta_veyra_desarrollo') 
+app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'clave_respaldo_segura_veyra_2026') 
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=30)
 
 db = SQLAlchemy(app)
 jwt = JWTManager(app)
+
+# --- MODELOS DE DATOS ---
 
 class User(db.Model):
     __tablename__ = 'users'
@@ -28,7 +32,7 @@ class User(db.Model):
     id = db.Column(db.String(100), primary_key=True, default=lambda: str(uuid.uuid4()))
     name = db.Column(db.String(150), nullable=False)
     lastName = db.Column(db.String(150), nullable=False, default='')
-    documentId = db.Column(db.String(50), unique=True, nullable=False, default='')
+    documentId = db.Column(db.String(50), unique=True, nullable=False)
     phone1 = db.Column(db.String(50), nullable=False, default='')
     phone2 = db.Column(db.String(50), nullable=True)
     email = db.Column(db.String(120), unique=True, nullable=False)
@@ -77,13 +81,16 @@ class Loan(db.Model):
             'due_date': self.due_date.isoformat()
         }
 
-# --- ENDPOINTS DE AUTENTICACIÓN ---
+# --- ENDPOINTS PÚBLICOS (AUTENTICACIÓN) ---
 
 @app.route('/api/auth/register', methods=['POST'])
 def register():
     data = request.get_json()
-    if not data or not data.get('name') or not data.get('email') or not data.get('password') or not data.get('documentId'):
-        return jsonify({'error': 'Faltan datos obligatorios'}), 400
+    
+    # Validación estricta de campos obligatorios
+    required_fields = ['name', 'email', 'password', 'documentId']
+    if not data or not all(data.get(field) for field in required_fields):
+        return jsonify({'error': 'Faltan datos obligatorios (name, email, password, documentId)'}), 400
         
     if User.query.filter_by(email=data['email']).first():
         return jsonify({'error': 'El correo ya está registrado'}), 409
@@ -97,17 +104,17 @@ def register():
         documentId=data['documentId'],
         phone1=data.get('phone1', ''),
         phone2=data.get('phone2', ''),
-        email=data['email'],
-        creditLevel=1,
-        maxCreditAllowed=50.0, 
-        hasActiveLoan=False
+        email=data['email']
     )
     new_user.set_password(data['password'])
     
-    db.session.add(new_user)
-    db.session.commit()
-    
-    return jsonify({'message': 'Usuario registrado exitosamente'}), 201
+    try:
+        db.session.add(new_user)
+        db.session.commit()
+        return jsonify({'message': 'Usuario registrado exitosamente', 'user_id': new_user.id}), 201
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Error interno al registrar el usuario'}), 500
 
 @app.route('/api/auth/login', methods=['POST'])
 def login():
@@ -126,7 +133,7 @@ def login():
         'user': user.to_dict()
     }), 200
 
-# --- ENDPOINTS PROTEGIDOS ---
+# --- ENDPOINTS PROTEGIDOS (REQUIEREN JWT) ---
 
 @app.route('/api/users/me', methods=['GET'])
 @jwt_required()
@@ -147,9 +154,11 @@ def create_loan():
         return jsonify({'error': 'Faltan datos del préstamo'}), 400
         
     try:
-        due_date = datetime.fromisoformat(data['due_date'].replace('Z', '+00:00'))
+        # Permite diferentes formatos de fecha manejando la 'Z' de UTC
+        date_str = data['due_date'].replace('Z', '+00:00')
+        due_date = datetime.fromisoformat(date_str)
     except (KeyError, ValueError):
-        return jsonify({'error': 'Formato de fecha inválido'}), 400
+        return jsonify({'error': 'Formato de fecha inválido. Use ISO 8601.'}), 400
 
     user = User.query.get(current_user_id)
     if not user:
@@ -160,16 +169,20 @@ def create_loan():
 
     new_loan = Loan(
         user_id=current_user_id,
-        amount=data['amount'],
-        interest_rate=data.get('interest_rate', 0.15),
+        amount=float(data['amount']),
+        interest_rate=float(data.get('interest_rate', 0.15)),
         due_date=due_date
     )
     
     user.hasActiveLoan = True
 
-    db.session.add(new_loan)
-    db.session.commit()
-    return jsonify(new_loan.to_dict()), 201
+    try:
+        db.session.add(new_loan)
+        db.session.commit()
+        return jsonify(new_loan.to_dict()), 201
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Error interno al crear el préstamo'}), 500
 
 @app.route('/api/loans/me', methods=['GET'])
 @jwt_required()
@@ -178,6 +191,7 @@ def get_my_loans():
     loans = Loan.query.filter_by(user_id=current_user_id).all()
     return jsonify([loan.to_dict() for loan in loans]), 200
 
+# Inicialización de la base de datos
 with app.app_context():
     db.create_all()
 
