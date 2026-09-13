@@ -25,6 +25,13 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'clave_respaldo_segura_veyra_2026') 
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=30)
 
+# PARÁMETROS CRÍTICOS PARA NEON POSTGRESQL (Evita Error 500 por SSL cerrado)
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    "pool_pre_ping": True,
+    "pool_recycle": 300,
+    "pool_timeout": 30,
+}
+
 db = SQLAlchemy(app)
 jwt = JWTManager(app)
 
