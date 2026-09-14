@@ -71,6 +71,40 @@ def send_verification_email(to_email, code):
         print(f"Error enviando correo: {e}")
         return False
 
+def send_reset_email(to_email, code):
+    sender_email = os.getenv('MAIL_USERNAME')
+    sender_password = os.getenv('MAIL_PASSWORD')
+    
+    if not sender_email or not sender_password:
+        return False
+
+    msg = MIMEMultipart()
+    msg['From'] = f"Veyra Money <{sender_email}>"
+    msg['To'] = to_email
+    msg['Subject'] = "Recuperación de contraseña - Veyra Money"
+    
+    body = f"""
+    Hola,
+
+    Has solicitado restablecer tu contraseña en Veyra Money.
+    
+    Tu código de seguridad es: {code}
+    
+    Si no fuiste tú, ignora este mensaje.
+    """
+    msg.attach(MIMEText(body, 'plain'))
+
+    try:
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(sender_email, sender_password)
+        server.send_message(msg)
+        server.quit()
+        return True
+    except Exception as e:
+        print(f"Error enviando correo de recuperación: {e}")
+        return False
+
 
 # --- MODELOS DE DATOS ---
 
@@ -245,6 +279,42 @@ def login():
         'token': access_token,
         'user': user.to_dict()
     }), 200
+
+# --- NUEVAS RUTAS DE RECUPERACIÓN DE CONTRASEÑA ---
+@app.route('/api/auth/forgot-password', methods=['POST'])
+def forgot_password():
+    data = request.get_json()
+    if not data or not data.get('email'):
+        return jsonify({'error': 'Falta el correo'}), 400
+
+    user = User.query.filter_by(email=data['email']).first()
+    if not user:
+        return jsonify({'error': 'No existe una cuenta con este correo'}), 404
+
+    otp_code = str(random.randint(100000, 999999))
+    user.verification_code = otp_code
+    db.session.commit()
+
+    send_reset_email(user.email, otp_code)
+    return jsonify({'message': 'Código enviado'}), 200
+
+
+@app.route('/api/auth/reset-password', methods=['POST'])
+def reset_password():
+    data = request.get_json()
+    if not data or not data.get('email') or not data.get('code') or not data.get('new_password'):
+        return jsonify({'error': 'Datos incompletos'}), 400
+
+    user = User.query.filter_by(email=data['email']).first()
+    if not user or user.verification_code != data['code']:
+        return jsonify({'error': 'Código inválido o expirado'}), 401
+
+    user.set_password(data['new_password'])
+    user.verification_code = None
+    db.session.commit()
+
+    return jsonify({'message': 'Contraseña actualizada'}), 200
+
 
 # --- ENDPOINTS PROTEGIDOS (REQUIEREN JWT) ---
 
