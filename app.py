@@ -11,6 +11,8 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 from dotenv import load_dotenv
 from flask_cors import CORS
+import boto3
+from botocore.exceptions import NoCredentialsError
 
 # Cargar variables de entorno locales (Render usará las suyas automáticamente)
 load_dotenv()
@@ -35,7 +37,21 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
 db = SQLAlchemy(app)
 jwt = JWTManager(app)
 
-# --- FUNCIÓN PARA ENVIAR CORREOS ---
+# --- CLIENTE AMAZON S3 ---
+s3_client = boto3.client(
+    's3',
+    aws_access_key_id=os.getenv('S3_ACCESS_KEY'),
+    aws_secret_access_key=os.getenv('S3_SECRET_KEY'),
+    region_name=os.getenv('S3_REGION')
+)
+S3_BUCKET = os.getenv('S3_BUCKET_NAME')
+S3_REGION = os.getenv('S3_REGION')
+
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'pdf'}
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+# --- FUNCIONES PARA ENVIAR CORREOS ---
 def send_verification_email(to_email, code):
     sender_email = os.getenv('MAIL_USERNAME')
     sender_password = os.getenv('MAIL_PASSWORD')
@@ -105,6 +121,42 @@ def send_reset_email(to_email, code):
         print(f"Error enviando correo de recuperación: {e}")
         return False
 
+def send_guarantor_email(to_email, code, user_name):
+    sender_email = os.getenv('MAIL_USERNAME')
+    sender_password = os.getenv('MAIL_PASSWORD')
+    
+    if not sender_email or not sender_password:
+        return False
+
+    msg = MIMEMultipart()
+    msg['From'] = f"Veyra Money <{sender_email}>"
+    msg['To'] = to_email
+    msg['Subject'] = "Solicitud de Fiador - Veyra Money"
+    
+    body = f"""
+    Hola,
+
+    {user_name} te ha agregado como fiador solidario en Veyra Money.
+    
+    Para confirmar tu identidad y aceptar, proporciona el siguiente código al solicitante:
+    
+    {code}
+    
+    Si no conoces a esta persona, ignora este mensaje.
+    """
+    msg.attach(MIMEText(body, 'plain'))
+
+    try:
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(sender_email, sender_password)
+        server.send_message(msg)
+        server.quit()
+        return True
+    except Exception as e:
+        print(f"Error enviando correo al fiador: {e}")
+        return False
+
 
 # --- MODELOS DE DATOS ---
 
@@ -123,11 +175,24 @@ class User(db.Model):
     maxCreditAllowed = db.Column(db.Float, nullable=False, default=50.0)
     hasActiveLoan = db.Column(db.Boolean, default=False, nullable=False)
     
-    # NUEVOS CAMPOS DE VERIFICACIÓN
+    # CAMPOS ORIGINALES DE VERIFICACIÓN
     is_verified = db.Column(db.Boolean, default=False, nullable=False)
     verification_code = db.Column(db.String(6), nullable=True)
     
+    # --- NUEVOS CAMPOS KYC ---
+    kyc_status = db.Column(db.String(20), default='pending') # pending, in_progress, verified, rejected
+    rif_url = db.Column(db.String(255), nullable=True)
+    cedula_front_url = db.Column(db.String(255), nullable=True)
+    selfie_url = db.Column(db.String(255), nullable=True)
+    home_picture_url = db.Column(db.String(255), nullable=True)
+    
+    # --- DATOS DE PAGO MÓVIL ---
+    pm_cedula = db.Column(db.String(50), nullable=True)
+    pm_phone = db.Column(db.String(50), nullable=True)
+    pm_bank = db.Column(db.String(100), nullable=True)
+    
     loans = db.relationship('Loan', backref='user', lazy=True)
+    guarantors = db.relationship('Guarantor', backref='user', lazy=True, cascade="all, delete-orphan")
 
     def to_dict(self):
         return {
@@ -141,7 +206,14 @@ class User(db.Model):
             'creditLevel': self.creditLevel,
             'maxCreditAllowed': self.maxCreditAllowed,
             'hasActiveLoan': self.hasActiveLoan,
-            'is_verified': self.is_verified
+            'is_verified': self.is_verified,
+            'kyc_status': self.kyc_status,
+            'pm_data': {
+                'cedula': self.pm_cedula,
+                'phone': self.pm_phone,
+                'bank': self.pm_bank
+            },
+            'guarantors': [g.to_dict() for g in self.guarantors]
         }
 
     def set_password(self, password):
@@ -149,6 +221,32 @@ class User(db.Model):
 
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
+
+
+class Guarantor(db.Model):
+    __tablename__ = 'guarantors'
+    
+    id = db.Column(db.String(100), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = db.Column(db.String(100), db.ForeignKey('users.id'), nullable=False)
+    
+    name = db.Column(db.String(150), nullable=False)
+    cedula = db.Column(db.String(50), nullable=False)
+    emergency_phone = db.Column(db.String(50), nullable=False)
+    email = db.Column(db.String(120), nullable=False)
+    
+    is_email_verified = db.Column(db.Boolean, default=False)
+    verification_code = db.Column(db.String(6), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'cedula': self.cedula,
+            'emergency_phone': self.emergency_phone,
+            'email': self.email,
+            'is_email_verified': self.is_email_verified
+        }
 
 
 class Loan(db.Model):
@@ -179,7 +277,6 @@ def home():
 def register():
     data = request.get_json()
     
-    # Se añade phone1 como obligatorio estricto
     required_fields = ['name', 'email', 'password', 'documentId', 'phone1']
     
     if not data:
@@ -189,14 +286,12 @@ def register():
         if field not in data or str(data.get(field)).strip() == "":
             return jsonify({'error': f'El campo obligatorio "{field}" falta o está vacío'}), 400
             
-    # Validaciones de duplicados (Email y Cédula)
     if User.query.filter_by(email=data['email']).first():
         return jsonify({'error': 'El correo ya está registrado'}), 409
         
     if User.query.filter_by(documentId=data['documentId']).first():
         return jsonify({'error': 'Esta cédula ya se encuentra registrada'}), 409
 
-    # Validaciones de duplicados (Teléfonos)
     phone1 = data['phone1'].strip()
     if User.query.filter_by(phone1=phone1).first() or User.query.filter_by(phone2=phone1).first():
         return jsonify({'error': 'El teléfono principal ya está registrado en otra cuenta'}), 409
@@ -206,7 +301,6 @@ def register():
         if User.query.filter_by(phone1=phone2).first() or User.query.filter_by(phone2=phone2).first():
             return jsonify({'error': 'El teléfono secundario ya está registrado en otra cuenta'}), 409
 
-    # Generar código OTP de 6 dígitos
     otp_code = str(random.randint(100000, 999999))
 
     new_user = User(
@@ -224,8 +318,6 @@ def register():
     try:
         db.session.add(new_user)
         db.session.commit()
-        
-        # Enviar correo de verificación después de guardar en DB
         send_verification_email(new_user.email, otp_code)
         
         return jsonify({'message': 'Usuario registrado exitosamente. Se ha enviado un código a su correo.', 'user_id': new_user.id}), 201
@@ -233,8 +325,6 @@ def register():
         db.session.rollback()
         return jsonify({'error': 'Error interno al registrar el usuario'}), 500
 
-
-# --- NUEVA RUTA PARA VALIDAR EL CÓDIGO ---
 @app.route('/api/auth/verify', methods=['POST'])
 def verify_account():
     data = request.get_json()
@@ -251,13 +341,11 @@ def verify_account():
     if user.verification_code != data['code']:
         return jsonify({'error': 'El código de verificación es incorrecto'}), 401
         
-    # Activar cuenta y borrar el código usado
     user.is_verified = True
     user.verification_code = None 
     db.session.commit()
     
     return jsonify({'message': 'Cuenta verificada exitosamente'}), 200
-
 
 @app.route('/api/auth/login', methods=['POST'])
 def login():
@@ -270,7 +358,6 @@ def login():
     if not user or not user.check_password(data['password']):
         return jsonify({'error': 'Correo o contraseña incorrectos'}), 401
 
-    # Bloquear acceso si no está verificado
     if not user.is_verified:
         return jsonify({'error': 'Debes verificar tu correo electrónico antes de iniciar sesión', 'needs_verification': True}), 403
 
@@ -280,7 +367,6 @@ def login():
         'user': user.to_dict()
     }), 200
 
-# --- NUEVAS RUTAS DE RECUPERACIÓN DE CONTRASEÑA ---
 @app.route('/api/auth/forgot-password', methods=['POST'])
 def forgot_password():
     data = request.get_json()
@@ -297,7 +383,6 @@ def forgot_password():
 
     send_reset_email(user.email, otp_code)
     return jsonify({'message': 'Código enviado'}), 200
-
 
 @app.route('/api/auth/reset-password', methods=['POST'])
 def reset_password():
@@ -316,7 +401,132 @@ def reset_password():
     return jsonify({'message': 'Contraseña actualizada'}), 200
 
 
-# --- ENDPOINTS PROTEGIDOS (REQUIEREN JWT) ---
+# --- NUEVOS ENDPOINTS KYC Y S3 ---
+
+@app.route('/api/kyc/update_pm', methods=['PUT'])
+@jwt_required()
+def update_payment_data():
+    current_user_id = get_jwt_identity()
+    data = request.get_json()
+    
+    if not data or not all(k in data for k in ("pm_cedula", "pm_phone", "pm_bank")):
+        return jsonify({'error': 'Faltan datos de pago móvil'}), 400
+
+    user = User.query.get(current_user_id)
+    user.pm_cedula = data['pm_cedula']
+    user.pm_phone = data['pm_phone']
+    user.pm_bank = data['pm_bank']
+    
+    if user.kyc_status == 'pending':
+        user.kyc_status = 'in_progress'
+        
+    db.session.commit()
+    return jsonify({'message': 'Datos de desembolso actualizados', 'user': user.to_dict()}), 200
+
+@app.route('/api/kyc/guarantor', methods=['POST'])
+@jwt_required()
+def add_guarantor():
+    current_user_id = get_jwt_identity()
+    user = User.query.get(current_user_id)
+    data = request.get_json()
+
+    required_fields = ['name', 'cedula', 'emergency_phone', 'email']
+    if not all(field in data for field in required_fields):
+        return jsonify({'error': 'Datos del fiador incompletos'}), 400
+
+    if len(user.guarantors) >= 2:
+        return jsonify({'error': 'Ya has registrado el máximo de 2 fiadores'}), 400
+
+    otp_code = str(random.randint(100000, 999999))
+    
+    new_guarantor = Guarantor(
+        user_id=current_user_id,
+        name=data['name'],
+        cedula=data['cedula'],
+        emergency_phone=data['emergency_phone'],
+        email=data['email'],
+        verification_code=otp_code
+    )
+    
+    db.session.add(new_guarantor)
+    db.session.commit()
+
+    send_guarantor_email(new_guarantor.email, otp_code, f"{user.name} {user.lastName}")
+
+    return jsonify({'message': 'Fiador registrado. Se ha enviado un código a su correo.', 'guarantor_id': new_guarantor.id}), 201
+
+@app.route('/api/kyc/guarantor/verify', methods=['POST'])
+@jwt_required()
+def verify_guarantor():
+    data = request.get_json()
+    if not data or 'guarantor_id' not in data or 'code' not in data:
+        return jsonify({'error': 'Faltan datos'}), 400
+
+    guarantor = Guarantor.query.get(data['guarantor_id'])
+    if not guarantor:
+        return jsonify({'error': 'Fiador no encontrado'}), 404
+
+    if guarantor.verification_code != data['code']:
+        return jsonify({'error': 'Código incorrecto'}), 400
+
+    guarantor.is_email_verified = True
+    guarantor.verification_code = None
+    db.session.commit()
+
+    return jsonify({'message': 'Fiador verificado exitosamente'}), 200
+
+@app.route('/api/kyc/upload', methods=['POST'])
+@jwt_required()
+def upload_kyc_document():
+    current_user_id = get_jwt_identity()
+    user = User.query.get(current_user_id)
+    
+    if 'file' not in request.files or 'document_type' not in request.form:
+        return jsonify({'error': 'Falta el archivo o el tipo de documento'}), 400
+        
+    file = request.files['file']
+    doc_type = request.form['document_type'] 
+    
+    if file.filename == '':
+        return jsonify({'error': 'Ningún archivo seleccionado'}), 400
+        
+    if file and allowed_file(file.filename):
+        file_extension = file.filename.rsplit('.', 1)[1].lower()
+        filename = f"kyc/{current_user_id}/{doc_type}_{uuid.uuid4().hex[:8]}.{file_extension}"
+        
+        try:
+            s3_client.upload_fileobj(
+                file,
+                S3_BUCKET,
+                filename,
+                ExtraArgs={"ContentType": file.content_type}
+            )
+            
+            file_url = f"https://{S3_BUCKET}.s3.{S3_REGION}.amazonaws.com/{filename}"
+            
+            if doc_type == 'rif':
+                user.rif_url = file_url
+            elif doc_type == 'cedula_front':
+                user.cedula_front_url = file_url
+            elif doc_type == 'selfie':
+                user.selfie_url = file_url
+            elif doc_type == 'home':
+                user.home_picture_url = file_url
+            else:
+                return jsonify({'error': 'Tipo de documento no válido'}), 400
+                
+            db.session.commit()
+            return jsonify({'message': 'Archivo subido a S3 correctamente', 'url': file_url}), 200
+            
+        except NoCredentialsError:
+            return jsonify({'error': 'Credenciales de AWS no válidas o no encontradas'}), 500
+        except Exception as e:
+            return jsonify({'error': f'Error subiendo a S3: {str(e)}'}), 500
+
+    return jsonify({'error': 'Tipo de archivo no permitido'}), 400
+
+
+# --- ENDPOINTS PROTEGIDOS (PERFIL Y PRÉSTAMOS) ---
 
 @app.route('/api/users/me', methods=['GET'])
 @jwt_required()
@@ -331,19 +541,26 @@ def get_my_profile():
 @jwt_required()
 def create_loan():
     current_user_id = get_jwt_identity()
+    user = User.query.get(current_user_id)
     data = request.get_json()
     
+    # --- LA VALIDACIÓN ESTRICTA DE KYC Y FIADORES ---
+    if user.kyc_status != 'verified':
+        return jsonify({'error': 'Debes completar y verificar tu perfil KYC antes de solicitar un préstamo.'}), 403
+        
+    verified_guarantors = [g for g in user.guarantors if g.is_email_verified]
+    if len(verified_guarantors) < 2:
+        return jsonify({'error': 'Debes registrar y verificar los correos de al menos 2 fiadores solidarios.'}), 403
+
     if not data or 'amount' not in data or 'due_date' not in data:
         return jsonify({'error': 'Faltan datos del préstamo'}), 400
         
     try:
-        # Permite diferentes formatos de fecha manejando la 'Z' de UTC
         date_str = data['due_date'].replace('Z', '+00:00')
         due_date = datetime.fromisoformat(date_str)
     except (KeyError, ValueError):
         return jsonify({'error': 'Formato de fecha inválido. Use ISO 8601.'}), 400
 
-    user = User.query.get(current_user_id)
     if not user:
         return jsonify({'error': 'Usuario inválido'}), 404
         
