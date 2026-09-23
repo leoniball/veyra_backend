@@ -157,6 +157,40 @@ def send_guarantor_email(to_email, code, user_name):
         print(f"Error enviando correo al fiador: {e}")
         return False
 
+def send_email_change_email(to_email, code):
+    sender_email = os.getenv('MAIL_USERNAME')
+    sender_password = os.getenv('MAIL_PASSWORD')
+    
+    if not sender_email or not sender_password:
+        return False
+
+    msg = MIMEMultipart()
+    msg['From'] = f"Veyra Money <{sender_email}>"
+    msg['To'] = to_email
+    msg['Subject'] = "Confirmación de cambio de correo - Veyra Money"
+    
+    body = f"""
+    Hola,
+
+    Has solicitado asociar este correo a tu cuenta de Veyra Money.
+    
+    Tu código de seguridad para confirmar el cambio es: {code}
+    
+    Si no fuiste tú, por favor ignora este mensaje.
+    """
+    msg.attach(MIMEText(body, 'plain'))
+
+    try:
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(sender_email, sender_password)
+        server.send_message(msg)
+        server.quit()
+        return True
+    except Exception as e:
+        print(f"Error enviando correo de cambio de email: {e}")
+        return False
+
 
 # --- MODELOS DE DATOS ---
 
@@ -175,18 +209,19 @@ class User(db.Model):
     maxCreditAllowed = db.Column(db.Float, nullable=False, default=50.0)
     hasActiveLoan = db.Column(db.Boolean, default=False, nullable=False)
     
-    # CAMPOS ORIGINALES DE VERIFICACIÓN
     is_verified = db.Column(db.Boolean, default=False, nullable=False)
     verification_code = db.Column(db.String(6), nullable=True)
     
-    # --- NUEVOS CAMPOS KYC ---
-    kyc_status = db.Column(db.String(20), default='pending') # pending, in_progress, verified, rejected
+    kyc_status = db.Column(db.String(20), default='pending')
     rif_url = db.Column(db.String(255), nullable=True)
     cedula_front_url = db.Column(db.String(255), nullable=True)
     selfie_url = db.Column(db.String(255), nullable=True)
     home_picture_url = db.Column(db.String(255), nullable=True)
     
-    # --- DATOS DE PAGO MÓVIL ---
+    # --- NUEVOS CAMPOS: BLOQUEO DE KYC Y CAMBIO DE CORREO ---
+    last_kyc_update = db.Column(db.DateTime, nullable=True)
+    pending_email = db.Column(db.String(120), nullable=True)
+    
     pm_cedula = db.Column(db.String(50), nullable=True)
     pm_phone = db.Column(db.String(50), nullable=True)
     pm_bank = db.Column(db.String(100), nullable=True)
@@ -208,6 +243,12 @@ class User(db.Model):
             'hasActiveLoan': self.hasActiveLoan,
             'is_verified': self.is_verified,
             'kyc_status': self.kyc_status,
+            'cedula_front_url': self.cedula_front_url,
+            'selfie_url': self.selfie_url,
+            'rif_url': self.rif_url,
+            'home_picture_url': self.home_picture_url,
+            'last_kyc_update': self.last_kyc_update.isoformat() if self.last_kyc_update else None,
+            'pending_email': self.pending_email,
             'pm_data': {
                 'cedula': self.pm_cedula,
                 'phone': self.pm_phone,
@@ -278,7 +319,6 @@ def register():
     data = request.get_json()
     
     required_fields = ['name', 'email', 'password', 'documentId', 'phone1']
-    
     if not data:
         return jsonify({'error': 'No se enviaron datos JSON'}), 400
         
@@ -320,7 +360,7 @@ def register():
         db.session.commit()
         send_verification_email(new_user.email, otp_code)
         
-        return jsonify({'message': 'Usuario registrado exitosamente. Se ha enviado un código a su correo.', 'user_id': new_user.id}), 201
+        return jsonify({'message': 'Usuario registrado exitosamente.', 'user_id': new_user.id}), 201
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': 'Error interno al registrar el usuario'}), 500
@@ -354,7 +394,6 @@ def login():
         return jsonify({'error': 'Credenciales incompletas'}), 400
 
     user = User.query.filter_by(email=data['email']).first()
-    
     if not user or not user.check_password(data['password']):
         return jsonify({'error': 'Correo o contraseña incorrectos'}), 401
 
@@ -400,8 +439,78 @@ def reset_password():
 
     return jsonify({'message': 'Contraseña actualizada'}), 200
 
+# --- EDICIÓN DE PERFIL Y CAMBIO DE CORREO ---
 
-# --- NUEVOS ENDPOINTS KYC Y S3 ---
+@app.route('/api/users/me', methods=['PUT'])
+@jwt_required()
+def update_profile():
+    current_user_id = get_jwt_identity()
+    data = request.get_json()
+    user = User.query.get(current_user_id)
+    
+    if not user:
+        return jsonify({'error': 'Usuario no encontrado'}), 404
+        
+    if 'name' in data and str(data['name']).strip() != "":
+        user.name = data['name']
+    if 'lastName' in data:
+        user.lastName = data['lastName']
+    if 'phone1' in data and str(data['phone1']).strip() != "":
+        user.phone1 = data['phone1']
+    if 'phone2' in data:
+        user.phone2 = data['phone2']
+        
+    db.session.commit()
+    return jsonify({'message': 'Perfil actualizado correctamente', 'user': user.to_dict()}), 200
+
+@app.route('/api/users/email-change/request', methods=['POST'])
+@jwt_required()
+def request_email_change():
+    current_user_id = get_jwt_identity()
+    data = request.get_json()
+    user = User.query.get(current_user_id)
+    
+    if not data or not data.get('new_email'):
+        return jsonify({'error': 'Debes proporcionar un nuevo correo válido'}), 400
+        
+    new_email = data['new_email'].strip()
+    
+    if User.query.filter_by(email=new_email).first() or User.query.filter_by(pending_email=new_email).first():
+        return jsonify({'error': 'Este correo ya se encuentra registrado o en proceso de registro'}), 409
+
+    otp_code = str(random.randint(100000, 999999))
+    user.pending_email = new_email
+    user.verification_code = otp_code
+    db.session.commit()
+    
+    send_email_change_email(new_email, otp_code)
+    return jsonify({'message': 'Código enviado al nuevo correo electrónico'}), 200
+
+@app.route('/api/users/email-change/verify', methods=['POST'])
+@jwt_required()
+def verify_email_change():
+    current_user_id = get_jwt_identity()
+    data = request.get_json()
+    user = User.query.get(current_user_id)
+    
+    if not data or not data.get('code'):
+        return jsonify({'error': 'Falta el código de verificación'}), 400
+        
+    if not user.pending_email:
+        return jsonify({'error': 'No hay ninguna solicitud de cambio de correo pendiente'}), 400
+        
+    if user.verification_code != data['code']:
+        return jsonify({'error': 'El código de verificación es incorrecto'}), 401
+        
+    # Aplicar el cambio
+    user.email = user.pending_email
+    user.pending_email = None
+    user.verification_code = None
+    db.session.commit()
+    
+    return jsonify({'message': 'Tu correo ha sido actualizado exitosamente'}), 200
+
+# --- ENDPOINTS KYC Y S3 ---
 
 @app.route('/api/kyc/update_pm', methods=['PUT'])
 @jwt_required()
@@ -455,7 +564,6 @@ def add_guarantor():
 
     return jsonify({'message': 'Fiador registrado. Se ha enviado un código a su correo.', 'guarantor_id': new_guarantor.id}), 201
 
-
 @app.route('/api/kyc/guarantor/verify', methods=['POST'])
 @jwt_required()
 def verify_guarantor():
@@ -473,24 +581,29 @@ def verify_guarantor():
     guarantor.is_email_verified = True
     guarantor.verification_code = None
     
-    # --- LA MAGIA: ACTUALIZAR KYC A VERIFIED SI AMBOS ESTÁN LISTOS ---
     user = User.query.get(guarantor.user_id)
     verified_guarantors = [g for g in user.guarantors if g.is_email_verified]
     
     if len(verified_guarantors) >= 2:
         user.kyc_status = 'verified'
-    # -----------------------------------------------------------------
 
     db.session.commit()
-
     return jsonify({'message': 'Fiador verificado exitosamente'}), 200
-
 
 @app.route('/api/kyc/upload', methods=['POST'])
 @jwt_required()
 def upload_kyc_document():
     current_user_id = get_jwt_identity()
     user = User.query.get(current_user_id)
+    
+    # --- LA MAGIA DEL CANDADO MENSUAL (30 DÍAS) ---
+    # Si tiene fecha previa, verificamos si ha pasado el tiempo.
+    # Permite ventana de 1 hora para poder subir los 4 documentos seguidos en la misma sesión.
+    if user.last_kyc_update:
+        time_since_update = datetime.utcnow() - user.last_kyc_update
+        if timedelta(hours=1) < time_since_update < timedelta(days=30):
+            return jsonify({'error': 'Solo puedes actualizar tus documentos KYC una vez cada 30 días.'}), 403
+    # ----------------------------------------------
     
     if 'file' not in request.files or 'document_type' not in request.form:
         return jsonify({'error': 'Falta el archivo o el tipo de documento'}), 400
@@ -526,6 +639,9 @@ def upload_kyc_document():
             else:
                 return jsonify({'error': 'Tipo de documento no válido'}), 400
                 
+            # Actualiza el reloj del candado de 30 días con cada subida
+            user.last_kyc_update = datetime.utcnow()
+            
             db.session.commit()
             return jsonify({'message': 'Archivo subido a S3 correctamente', 'url': file_url}), 200
             
@@ -535,7 +651,6 @@ def upload_kyc_document():
             return jsonify({'error': f'Error subiendo a S3: {str(e)}'}), 500
 
     return jsonify({'error': 'Tipo de archivo no permitido'}), 400
-
 
 # --- ENDPOINTS PROTEGIDOS (PERFIL Y PRÉSTAMOS) ---
 
@@ -548,7 +663,6 @@ def get_my_profile():
         return jsonify({'error': 'Usuario no encontrado'}), 404
     return jsonify(user.to_dict()), 200
 
-
 @app.route('/api/loans', methods=['POST'])
 @jwt_required()
 def create_loan():
@@ -556,7 +670,6 @@ def create_loan():
     user = User.query.get(current_user_id)
     data = request.get_json()
     
-    # --- LA VALIDACIÓN ESTRICTA DE KYC Y FIADORES ---
     if user.kyc_status != 'verified':
         return jsonify({'error': 'Debes completar y verificar tu perfil KYC antes de solicitar un préstamo.'}), 403
         
@@ -595,7 +708,6 @@ def create_loan():
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': 'Error interno al crear el préstamo'}), 500
-
 
 @app.route('/api/loans/me', methods=['GET'])
 @jwt_required()
