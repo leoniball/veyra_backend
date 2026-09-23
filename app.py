@@ -2,7 +2,7 @@ import os
 import uuid
 import random
 import smtplib
-import requests # NUEVO: Necesario para consultar la tasa BCV
+import requests  # Necesario para consultar la tasa BCV
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
@@ -326,16 +326,27 @@ def get_bcv_rate():
         if response.status_code == 200:
             data = response.json()
             return jsonify({
+                "success": True, # Agregado para que Flutter lo detecte
                 "source": "BCV",
                 "rate": data.get("promedio", 36.65),
                 "date": data.get("fechaActualizacion", "")
             }), 200
         else:
-            return jsonify({"source": "Backup", "rate": 36.65}), 200
+            return jsonify({
+                "success": True, # Se mantiene en True para no romper el frontend, pero usa respaldo
+                "source": "Backup", 
+                "rate": 36.65
+            }), 200
             
     except Exception as e:
         print(f"Error fetching BCV rate: {e}")
-        return jsonify({"source": "Error", "rate": 36.65}), 200
+        # En caso de error crítico con DolarAPI
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "source": "Error", 
+            "rate": 36.65
+        }), 500
 
 
 @app.route('/api/auth/register', methods=['POST'])
