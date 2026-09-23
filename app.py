@@ -455,6 +455,7 @@ def add_guarantor():
 
     return jsonify({'message': 'Fiador registrado. Se ha enviado un código a su correo.', 'guarantor_id': new_guarantor.id}), 201
 
+
 @app.route('/api/kyc/guarantor/verify', methods=['POST'])
 @jwt_required()
 def verify_guarantor():
@@ -471,9 +472,19 @@ def verify_guarantor():
 
     guarantor.is_email_verified = True
     guarantor.verification_code = None
+    
+    # --- LA MAGIA: ACTUALIZAR KYC A VERIFIED SI AMBOS ESTÁN LISTOS ---
+    user = User.query.get(guarantor.user_id)
+    verified_guarantors = [g for g in user.guarantors if g.is_email_verified]
+    
+    if len(verified_guarantors) >= 2:
+        user.kyc_status = 'verified'
+    # -----------------------------------------------------------------
+
     db.session.commit()
 
     return jsonify({'message': 'Fiador verificado exitosamente'}), 200
+
 
 @app.route('/api/kyc/upload', methods=['POST'])
 @jwt_required()
@@ -537,6 +548,7 @@ def get_my_profile():
         return jsonify({'error': 'Usuario no encontrado'}), 404
     return jsonify(user.to_dict()), 200
 
+
 @app.route('/api/loans', methods=['POST'])
 @jwt_required()
 def create_loan():
@@ -583,6 +595,7 @@ def create_loan():
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': 'Error interno al crear el préstamo'}), 500
+
 
 @app.route('/api/loans/me', methods=['GET'])
 @jwt_required()
