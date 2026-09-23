@@ -2,6 +2,7 @@ import os
 import uuid
 import random
 import smtplib
+import requests # NUEVO: Necesario para consultar la tasa BCV
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
@@ -308,11 +309,34 @@ class Loan(db.Model):
             'due_date': self.due_date.isoformat()
         }
 
-# --- ENDPOINTS PÚBLICOS (AUTENTICACIÓN) ---
+# --- ENDPOINTS PÚBLICOS ---
 
 @app.route('/', methods=['GET', 'HEAD'])
 def home():
     return jsonify({"status": "Servidor Veyra activo y funcionando"}), 200
+
+# --- NUEVO ENDPOINT: TASA BCV DESDE EL BACKEND ---
+@app.route('/api/bcv-rate', methods=['GET'])
+def get_bcv_rate():
+    try:
+        # El servidor backend en Render (USA) consulta la API, evitando bloqueos de CANTV/Digitel
+        url = "https://ve.dolarapi.com/v1/dolares/oficial"
+        response = requests.get(url, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            return jsonify({
+                "source": "BCV",
+                "rate": data.get("promedio", 36.65),
+                "date": data.get("fechaActualizacion", "")
+            }), 200
+        else:
+            return jsonify({"source": "Backup", "rate": 36.65}), 200
+            
+    except Exception as e:
+        print(f"Error fetching BCV rate: {e}")
+        return jsonify({"source": "Error", "rate": 36.65}), 200
+
 
 @app.route('/api/auth/register', methods=['POST'])
 def register():
