@@ -750,6 +750,66 @@ def get_my_loans():
     current_user_id = get_jwt_identity()
     loans = Loan.query.filter_by(user_id=current_user_id).all()
     return jsonify([loan.to_dict() for loan in loans]), 200
+# --- NUEVO ENDPOINT: REPORTE DE PAGOS ---
+@app.route('/api/loans/pay', methods=['POST'])
+@jwt_required()
+def report_payment():
+    current_user_id = get_jwt_identity()
+    user = User.query.get(current_user_id)
+    
+    if not user:
+        return jsonify({'error': 'Usuario no encontrado'}), 404
+
+    # Verificar que tiene un préstamo activo
+    if not user.hasActiveLoan:
+        return jsonify({'error': 'No tienes préstamos activos para pagar'}), 400
+
+    if 'file' not in request.files:
+        return jsonify({'error': 'Falta el comprobante de pago'}), 400
+        
+    file = request.files['file']
+    payment_method = request.form.get('payment_method', 'transferencia')
+    reference_number = request.form.get('reference_number', '')
+    
+    if file.filename == '':
+        return jsonify({'error': 'Ningún archivo seleccionado'}), 400
+        
+    if file and allowed_file(file.filename):
+        file_extension = file.filename.rsplit('.', 1)[1].lower()
+        # Se guarda en una carpeta separada 'payments'
+        filename = f"payments/{current_user_id}/receipt_{uuid.uuid4().hex[:8]}.{file_extension}"
+        
+        try:
+            # Subir a Amazon S3
+            s3_client.upload_fileobj(
+                file,
+                S3_BUCKET,
+                filename,
+                ExtraArgs={"ContentType": file.content_type}
+            )
+            
+            receipt_url = f"https://{S3_BUCKET}.s3.{S3_REGION}.amazonaws.com/{filename}"
+            
+            # --- LÓGICA DE NEGOCIO ---
+            # Aquí idealmente se crea un registro en una tabla 'Payments'. 
+            # Por ahora, simplemente actualizaremos el estado del usuario.
+            # Cambiamos a false para que la app entienda que el préstamo "ya no está activo" 
+            # y pase a estado de "Validando" (esto lo refinaremos en el backoffice).
+            user.hasActiveLoan = False 
+            
+            db.session.commit()
+            
+            return jsonify({
+                'message': 'Pago reportado con éxito. En revisión.', 
+                'receipt_url': receipt_url
+            }), 200
+            
+        except NoCredentialsError:
+            return jsonify({'error': 'Credenciales de AWS no válidas'}), 500
+        except Exception as e:
+            return jsonify({'error': f'Error subiendo comprobante: {str(e)}'}), 500
+
+    return jsonify({'error': 'Tipo de archivo no permitido'}), 400
 
 # Inicialización de la base de datos
 with app.app_context():
