@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="es" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <title>Veyra Money | Backoffice</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #102027; }
+        .card { background-color: #1A3039; border: 1px solid rgba(255,255,255,0.1); }
+        .text-cyan { color: #00E5FF; }
+        .btn-cyan { background-color: #00E5FF; color: black; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <!-- PANTALLA DE LOGIN -->
+    <div class="container mt-5" id="login-section" style="max-width: 400px;">
+        <h2 class="mb-4 text-cyan text-center">Acceso Militar Veyra</h2>
+        <div class="card p-4">
+            <input type="email" id="email" class="form-control mb-3 bg-dark text-white" placeholder="Correo Administrador">
+            <input type="password" id="password" class="form-control mb-3 bg-dark text-white" placeholder="Contraseña">
+            <button class="btn btn-cyan w-100" onclick="login()">ACCEDER AL MANDO</button>
+            <div id="login-error" class="text-danger mt-2 text-center"></div>
+        </div>
+    </div>
+
+    <!-- PANEL PRINCIPAL (Oculto hasta hacer login) -->
+    <div class="container mt-5 d-none" id="dashboard-section">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2 class="text-cyan">Centro de Auditoría</h2>
+            <button class="btn btn-outline-danger btn-sm" onclick="logout()">Cerrar Sesión</button>
+        </div>
+        
+        <ul class="nav nav-tabs" id="myTab" role="tablist">
+          <li class="nav-item" role="presentation">
+            <button class="nav-link active text-white bg-transparent" id="kyc-tab" data-bs-toggle="tab" data-bs-target="#kyc" type="button">1. Auditoría KYC</button>
+          </li>
+          <li class="nav-item" role="presentation">
+            <button class="nav-link text-white bg-transparent" id="pagos-tab" data-bs-toggle="tab" data-bs-target="#pagos" type="button">2. Liquidación de Pagos</button>
+          </li>
+        </ul>
+
+        <div class="tab-content mt-4" id="myTabContent">
+          <!-- PESTAÑA KYC -->
+          <div class="tab-pane fade show active" id="kyc" role="tabpanel">
+            <div id="kyc-list" class="row"></div>
+          </div>
+          <!-- PESTAÑA PAGOS -->
+          <div class="tab-pane fade" id="pagos" role="tabpanel">
+            <div id="pagos-list" class="row"></div>
+          </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const API_URL = '/api'; // Apunta al mismo servidor donde se aloja
+
+        // Verificar si ya hay sesión al cargar la página
+        window.onload = () => {
+            if(localStorage.getItem('admin_token')) {
+                showDashboard();
+            }
+        };
+
+        async function login() {
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            
+            try {
+                const res = await fetch(`${API_URL}/auth/login`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({email, password})
+                });
+                const data = await res.json();
+                
+                if(res.ok && data.user.is_admin) {
+                    localStorage.setItem('admin_token', data.token);
+                    showDashboard();
+                } else {
+                    document.getElementById('login-error').innerText = data.error || 'Acceso denegado.';
+                }
+            } catch (e) {
+                document.getElementById('login-error').innerText = 'Error de conexión.';
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem('admin_token');
+            document.getElementById('dashboard-section').classList.add('d-none');
+            document.getElementById('login-section').classList.remove('d-none');
+            document.getElementById('password').value = '';
+        }
+
+        function showDashboard() {
+            document.getElementById('login-section').classList.add('d-none');
+            document.getElementById('dashboard-section').classList.remove('d-none');
+            loadData();
+        }
+
+        async function loadData() {
+            const token = localStorage.getItem('admin_token');
+            const res = await fetch(`${API_URL}/admin/dashboard`, {
+                headers: {'Authorization': `Bearer ${token}`}
+            });
+            
+            if(res.status === 401 || res.status === 403) { logout(); return; }
+            
+            const data = await res.json();
+            renderKyc(data.pending_kyc_users);
+            renderPayments(data.pending_payments);
+        }
+
+        function renderKyc(users) {
+            const container = document.getElementById('kyc-list');
+            if(users.length === 0) { container.innerHTML = '<p class="text-white50">No hay perfiles pendientes.</p>'; return; }
+            
+            container.innerHTML = users.map(user => `
+                <div class="col-md-6 mb-4">
+                    <div class="card p-3">
+                        <h5>${user.name} ${user.lastName}</h5>
+                        <p class="mb-1 text-white-50">Cédula: ${user.documentId} | Telf: ${user.phone1}</p>
+                        <div class="d-flex gap-2 my-3">
+                            <a href="${user.documents.cedula}" target="_blank" class="btn btn-sm btn-outline-info">Ver Cédula</a>
+                            <a href="${user.documents.selfie}" target="_blank" class="btn btn-sm btn-outline-info">Ver Selfie</a>
+                            <a href="${user.documents.rif}" target="_blank" class="btn btn-sm btn-outline-info">Ver RIF</a>
+                        </div>
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-danger w-50" onclick="actionKyc('${user.id}', 'reject')">RECHAZAR</button>
+                            <button class="btn btn-success w-50" onclick="actionKyc('${user.id}', 'approve')">APROBAR</button>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function renderPayments(payments) {
+            const container = document.getElementById('pagos-list');
+            if(payments.length === 0) { container.innerHTML = '<p class="text-white50">No hay pagos reportados.</p>'; return; }
+            
+            container.innerHTML = payments.map(item => `
+                <div class="col-md-6 mb-4">
+                    <div class="card p-3">
+                        <h5>Pago de ${item.user.name}</h5>
+                        <h4 class="text-warning">Deuda: $${item.loan.amount}</h4>
+                        <p class="mb-1 text-white-50">Método: ${item.payment.method} | Ref: ${item.payment.reference}</p>
+                        <div class="my-3">
+                            <a href="${item.payment.receipt_url}" target="_blank" class="btn btn-sm btn-outline-info w-100">Ver Recibo (S3)</a>
+                        </div>
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-danger w-50" onclick="actionPayment('${item.payment.id}', 'reject')">ES FALSO</button>
+                            <button class="btn btn-success w-50" onclick="actionPayment('${item.payment.id}', 'approve')">LIQUIDAR</button>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function actionKyc(id, action) {
+            if(!confirm(`¿Estás seguro de ${action === 'approve' ? 'APROBAR' : 'RECHAZAR'} este perfil?`)) return;
+            const token = localStorage.getItem('admin_token');
+            await fetch(`${API_URL}/admin/users/${id}/review_kyc`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`},
+                body: JSON.stringify({action})
+            });
+            loadData();
+        }
+
+        async function actionPayment(id, action) {
+            if(!confirm(`¿Estás seguro de ${action === 'approve' ? 'LIQUIDAR' : 'RECHAZAR'} este pago?`)) return;
+            const token = localStorage.getItem('admin_token');
+            await fetch(`${API_URL}/admin/payments/${id}/review`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`},
+                body: JSON.stringify({action})
+            });
+            loadData();
+        }
+    </script>
+</body>
+</html>
