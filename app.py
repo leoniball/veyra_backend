@@ -6,7 +6,7 @@ import requests  # Necesario para consultar la tasa BCV
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, render_template
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
@@ -234,7 +234,7 @@ class User(db.Model):
     
     loans = db.relationship('Loan', backref='user', lazy=True)
     guarantors = db.relationship('Guarantor', backref='user', lazy=True, cascade="all, delete-orphan")
-    payments = db.relationship('Payment', backref='user', lazy=True) # NUEVO
+    payments = db.relationship('Payment', backref='user', lazy=True) 
 
     def to_dict(self):
         return {
@@ -262,7 +262,7 @@ class User(db.Model):
                 'bank': self.pm_bank
             },
             'guarantors': [g.to_dict() for g in self.guarantors],
-            'is_admin': is_admin(self) # NUEVO: Le dice a Flutter si mostrar el panel militar
+            'is_admin': is_admin(self) 
         }
 
     def set_password(self, password):
@@ -595,7 +595,6 @@ def verify_guarantor():
     user = User.query.get(guarantor.user_id)
     verified_guarantors = [g for g in user.guarantors if g.is_email_verified]
     
-    # NUEVA REGLA ADMINISTRATIVA: Va a panel militar en vez de aprobarse de una vez
     if len(verified_guarantors) >= 2 and user.kyc_status != 'verified':
         user.kyc_status = 'pending_admin'
 
@@ -712,13 +711,11 @@ def report_payment():
             s3_client.upload_fileobj(file, S3_BUCKET, filename, ExtraArgs={"ContentType": file.content_type})
             receipt_url = f"https://{S3_BUCKET}.s3.{S3_REGION}.amazonaws.com/{filename}"
             
-            # Buscamos el préstamo activo
             loan = Loan.query.filter_by(user_id=current_user_id, status='active').first()
             if loan:
                 loan.status = 'pending_payment'
                 loan.receipt_url = receipt_url
                 
-                # REGISTRAMOS EL PAGO INMUTABLE EN LA TABLA
                 new_payment = Payment(
                     loan_id=loan.id,
                     user_id=user.id,
@@ -728,7 +725,6 @@ def report_payment():
                 )
                 db.session.add(new_payment)
             
-            # IMPORTANTE: No se libera el hasActiveLoan todavía. El usuario queda bloqueado hasta que el admin audite.
             db.session.commit()
             return jsonify({'message': 'Pago reportado con éxito. En revisión militar.', 'receipt_url': receipt_url}), 200
             
@@ -736,7 +732,6 @@ def report_payment():
         except Exception as e: return jsonify({'error': f'Error subiendo comprobante: {str(e)}'}), 500
 
     return jsonify({'error': 'Tipo de archivo no permitido'}), 400
-
 
 # ==========================================
 # RUTAS DE ADMINISTRACIÓN (BACKOFFICE MILITAR)
@@ -798,11 +793,11 @@ def review_payment(payment_id):
     if action == 'approve':
         payment.status = 'approved'
         loan.status = 'liquidated'
-        user.hasActiveLoan = False # Liberamos al deudor para pedir otro préstamo
+        user.hasActiveLoan = False 
         msg = f"Pago validado. Préstamo de {user.name} liquidado."
     else:
         payment.status = 'rejected'
-        loan.status = 'active' # Vuelve a estar activo porque el recibo fue rechazado
+        loan.status = 'active' 
         user.hasActiveLoan = True
         msg = f"Recibo rechazado. El préstamo vuelve a estar activo y la persona bloqueada."
         
@@ -819,12 +814,19 @@ def trigger_morosidad():
     expired_loans = Loan.query.filter(Loan.status == 'active', Loan.due_date < hoy).all()
     
     for loan in expired_loans:
-        penalidad = loan.amount * 0.10 # Castigo del 10%
+        penalidad = loan.amount * 0.10 
         loan.amount += penalidad
         loan.due_date = loan.due_date + timedelta(days=3)
         
     db.session.commit()
     return jsonify({'message': f'Penalización de mora aplicada a {len(expired_loans)} deudores.'}), 200
+
+# ==========================================
+# RUTA WEB DEL PANEL ADMINISTRATIVO
+# ==========================================
+@app.route('/backoffice', methods=['GET'])
+def render_backoffice():
+    return render_template('admin_dashboard.html')
 
 # Inicialización de la base de datos
 with app.app_context():
