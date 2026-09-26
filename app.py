@@ -52,6 +52,12 @@ ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'pdf'}
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
+# --- SEGURIDAD: LISTA BLANCA DE ADMINISTRADORES ---
+ADMIN_EMAILS = ['lodavidvera@gmail.com', 'denisperez@veyramoney.com'] # Correos con poder absoluto
+
+def is_admin(user):
+    return user.email in ADMIN_EMAILS
+
 # --- FUNCIONES PARA ENVIAR CORREOS ---
 def send_verification_email(to_email, code):
     sender_email = os.getenv('MAIL_USERNAME')
@@ -219,7 +225,6 @@ class User(db.Model):
     selfie_url = db.Column(db.String(255), nullable=True)
     home_picture_url = db.Column(db.String(255), nullable=True)
     
-    # --- NUEVOS CAMPOS: BLOQUEO DE KYC Y CAMBIO DE CORREO ---
     last_kyc_update = db.Column(db.DateTime, nullable=True)
     pending_email = db.Column(db.String(120), nullable=True)
     
@@ -229,6 +234,7 @@ class User(db.Model):
     
     loans = db.relationship('Loan', backref='user', lazy=True)
     guarantors = db.relationship('Guarantor', backref='user', lazy=True, cascade="all, delete-orphan")
+    payments = db.relationship('Payment', backref='user', lazy=True) # NUEVO
 
     def to_dict(self):
         return {
@@ -255,7 +261,8 @@ class User(db.Model):
                 'phone': self.pm_phone,
                 'bank': self.pm_bank
             },
-            'guarantors': [g.to_dict() for g in self.guarantors]
+            'guarantors': [g.to_dict() for g in self.guarantors],
+            'is_admin': is_admin(self) # NUEVO: Le dice a Flutter si mostrar el panel militar
         }
 
     def set_password(self, password):
@@ -299,6 +306,11 @@ class Loan(db.Model):
     amount = db.Column(db.Float, nullable=False)
     interest_rate = db.Column(db.Float, nullable=False)
     due_date = db.Column(db.DateTime, nullable=False)
+    
+    # NUEVOS CAMPOS DEL PRÉSTAMO
+    status = db.Column(db.String(20), default='active') 
+    receipt_url = db.Column(db.String(255), nullable=True)
+    payments = db.relationship('Payment', backref='loan', lazy=True)
 
     def to_dict(self):
         return {
@@ -306,8 +318,33 @@ class Loan(db.Model):
             'user_id': self.user_id,
             'amount': self.amount,
             'interest_rate': self.interest_rate,
-            'due_date': self.due_date.isoformat()
+            'due_date': self.due_date.isoformat(),
+            'status': self.status,
+            'receipt_url': self.receipt_url,
+            'payment_history': [p.to_dict() for p in self.payments]
         }
+
+# --- NUEVA TABLA: HISTORIAL DE PAGOS INMUTABLE ---
+class Payment(db.Model):
+    __tablename__ = 'payments'
+    id = db.Column(db.String(100), primary_key=True, default=lambda: str(uuid.uuid4()))
+    loan_id = db.Column(db.String(100), db.ForeignKey('loans.id'), nullable=False)
+    user_id = db.Column(db.String(100), db.ForeignKey('users.id'), nullable=False)
+    
+    payment_method = db.Column(db.String(50), nullable=False)
+    reference_number = db.Column(db.String(100), nullable=False)
+    receipt_url = db.Column(db.String(255), nullable=False)
+    
+    status = db.Column(db.String(20), default='pending') # pending, approved, rejected
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id, 'loan_id': self.loan_id, 'method': self.payment_method,
+            'reference': self.reference_number, 'receipt_url': self.receipt_url,
+            'status': self.status, 'date': self.created_at.isoformat()
+        }
+
 
 # --- ENDPOINTS PÚBLICOS ---
 
@@ -315,61 +352,42 @@ class Loan(db.Model):
 def home():
     return jsonify({"status": "Servidor Veyra activo y funcionando"}), 200
 
-# --- NUEVO ENDPOINT: TASA BCV DESDE EL BACKEND ---
 @app.route('/api/bcv-rate', methods=['GET'])
 def get_bcv_rate():
     try:
-        # El servidor backend en Render (USA) consulta la API, evitando bloqueos de CANTV/Digitel
         url = "https://ve.dolarapi.com/v1/dolares/oficial"
         response = requests.get(url, timeout=10)
         
         if response.status_code == 200:
             data = response.json()
             return jsonify({
-                "success": True, # Agregado para que Flutter lo detecte
+                "success": True, 
                 "source": "BCV",
                 "rate": data.get("promedio", 36.65),
                 "date": data.get("fechaActualizacion", "")
             }), 200
         else:
-            return jsonify({
-                "success": True, # Se mantiene en True para no romper el frontend, pero usa respaldo
-                "source": "Backup", 
-                "rate": 36.65
-            }), 200
-            
+            return jsonify({"success": True, "source": "Backup", "rate": 36.65}), 200
     except Exception as e:
         print(f"Error fetching BCV rate: {e}")
-        # En caso de error crítico con DolarAPI
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "source": "Error", 
-            "rate": 36.65
-        }), 500
-
+        return jsonify({"success": False, "error": str(e), "source": "Error", "rate": 36.65}), 500
 
 @app.route('/api/auth/register', methods=['POST'])
 def register():
     data = request.get_json()
     
     required_fields = ['name', 'email', 'password', 'documentId', 'phone1']
-    if not data:
-        return jsonify({'error': 'No se enviaron datos JSON'}), 400
+    if not data: return jsonify({'error': 'No se enviaron datos JSON'}), 400
         
     for field in required_fields:
         if field not in data or str(data.get(field)).strip() == "":
             return jsonify({'error': f'El campo obligatorio "{field}" falta o está vacío'}), 400
             
-    if User.query.filter_by(email=data['email']).first():
-        return jsonify({'error': 'El correo ya está registrado'}), 409
-        
-    if User.query.filter_by(documentId=data['documentId']).first():
-        return jsonify({'error': 'Esta cédula ya se encuentra registrada'}), 409
+    if User.query.filter_by(email=data['email']).first(): return jsonify({'error': 'El correo ya está registrado'}), 409
+    if User.query.filter_by(documentId=data['documentId']).first(): return jsonify({'error': 'Esta cédula ya se encuentra registrada'}), 409
 
     phone1 = data['phone1'].strip()
-    if User.query.filter_by(phone1=phone1).first() or User.query.filter_by(phone2=phone1).first():
-        return jsonify({'error': 'El teléfono principal ya está registrado en otra cuenta'}), 409
+    if User.query.filter_by(phone1=phone1).first() or User.query.filter_by(phone2=phone1).first(): return jsonify({'error': 'El teléfono principal ya está registrado en otra cuenta'}), 409
         
     phone2 = data.get('phone2', '').strip()
     if phone2 != "":
@@ -379,14 +397,8 @@ def register():
     otp_code = str(random.randint(100000, 999999))
 
     new_user = User(
-        name=data['name'],
-        lastName=data.get('lastName', ''),
-        documentId=data['documentId'],
-        phone1=phone1,
-        phone2=phone2,
-        email=data['email'],
-        is_verified=False,
-        verification_code=otp_code
+        name=data['name'], lastName=data.get('lastName', ''), documentId=data['documentId'],
+        phone1=phone1, phone2=phone2, email=data['email'], is_verified=False, verification_code=otp_code
     )
     new_user.set_password(data['password'])
     
@@ -394,7 +406,6 @@ def register():
         db.session.add(new_user)
         db.session.commit()
         send_verification_email(new_user.email, otp_code)
-        
         return jsonify({'message': 'Usuario registrado exitosamente.', 'user_id': new_user.id}), 201
     except Exception as e:
         db.session.rollback()
@@ -403,53 +414,38 @@ def register():
 @app.route('/api/auth/verify', methods=['POST'])
 def verify_account():
     data = request.get_json()
-    if not data or not data.get('email') or not data.get('code'):
-        return jsonify({'error': 'Faltan datos de verificación'}), 400
+    if not data or not data.get('email') or not data.get('code'): return jsonify({'error': 'Faltan datos de verificación'}), 400
         
     user = User.query.filter_by(email=data['email']).first()
-    if not user:
-        return jsonify({'error': 'Usuario no encontrado'}), 404
-        
-    if user.is_verified:
-        return jsonify({'message': 'La cuenta ya estaba verificada'}), 200
-        
-    if user.verification_code != data['code']:
-        return jsonify({'error': 'El código de verificación es incorrecto'}), 401
+    if not user: return jsonify({'error': 'Usuario no encontrado'}), 404
+    if user.is_verified: return jsonify({'message': 'La cuenta ya estaba verificada'}), 200
+    if user.verification_code != data['code']: return jsonify({'error': 'El código de verificación es incorrecto'}), 401
         
     user.is_verified = True
     user.verification_code = None 
     db.session.commit()
-    
     return jsonify({'message': 'Cuenta verificada exitosamente'}), 200
 
 @app.route('/api/auth/login', methods=['POST'])
 def login():
     data = request.get_json()
-    if not data or not data.get('email') or not data.get('password'):
-        return jsonify({'error': 'Credenciales incompletas'}), 400
+    if not data or not data.get('email') or not data.get('password'): return jsonify({'error': 'Credenciales incompletas'}), 400
 
     user = User.query.filter_by(email=data['email']).first()
-    if not user or not user.check_password(data['password']):
-        return jsonify({'error': 'Correo o contraseña incorrectos'}), 401
+    if not user or not user.check_password(data['password']): return jsonify({'error': 'Correo o contraseña incorrectos'}), 401
 
-    if not user.is_verified:
-        return jsonify({'error': 'Debes verificar tu correo electrónico antes de iniciar sesión', 'needs_verification': True}), 403
+    if not user.is_verified: return jsonify({'error': 'Debes verificar tu correo electrónico antes de iniciar sesión', 'needs_verification': True}), 403
 
     access_token = create_access_token(identity=user.id)
-    return jsonify({
-        'token': access_token,
-        'user': user.to_dict()
-    }), 200
+    return jsonify({'token': access_token, 'user': user.to_dict()}), 200
 
 @app.route('/api/auth/forgot-password', methods=['POST'])
 def forgot_password():
     data = request.get_json()
-    if not data or not data.get('email'):
-        return jsonify({'error': 'Falta el correo'}), 400
+    if not data or not data.get('email'): return jsonify({'error': 'Falta el correo'}), 400
 
     user = User.query.filter_by(email=data['email']).first()
-    if not user:
-        return jsonify({'error': 'No existe una cuenta con este correo'}), 404
+    if not user: return jsonify({'error': 'No existe una cuenta con este correo'}), 404
 
     otp_code = str(random.randint(100000, 999999))
     user.verification_code = otp_code
@@ -461,12 +457,10 @@ def forgot_password():
 @app.route('/api/auth/reset-password', methods=['POST'])
 def reset_password():
     data = request.get_json()
-    if not data or not data.get('email') or not data.get('code') or not data.get('new_password'):
-        return jsonify({'error': 'Datos incompletos'}), 400
+    if not data or not data.get('email') or not data.get('code') or not data.get('new_password'): return jsonify({'error': 'Datos incompletos'}), 400
 
     user = User.query.filter_by(email=data['email']).first()
-    if not user or user.verification_code != data['code']:
-        return jsonify({'error': 'Código inválido o expirado'}), 401
+    if not user or user.verification_code != data['code']: return jsonify({'error': 'Código inválido o expirado'}), 401
 
     user.set_password(data['new_password'])
     user.verification_code = None
@@ -475,6 +469,13 @@ def reset_password():
     return jsonify({'message': 'Contraseña actualizada'}), 200
 
 # --- EDICIÓN DE PERFIL Y CAMBIO DE CORREO ---
+@app.route('/api/users/me', methods=['GET'])
+@jwt_required()
+def get_my_profile():
+    current_user_id = get_jwt_identity()
+    user = User.query.get(current_user_id)
+    if not user: return jsonify({'error': 'Usuario no encontrado'}), 404
+    return jsonify(user.to_dict()), 200
 
 @app.route('/api/users/me', methods=['PUT'])
 @jwt_required()
@@ -483,17 +484,12 @@ def update_profile():
     data = request.get_json()
     user = User.query.get(current_user_id)
     
-    if not user:
-        return jsonify({'error': 'Usuario no encontrado'}), 404
+    if not user: return jsonify({'error': 'Usuario no encontrado'}), 404
         
-    if 'name' in data and str(data['name']).strip() != "":
-        user.name = data['name']
-    if 'lastName' in data:
-        user.lastName = data['lastName']
-    if 'phone1' in data and str(data['phone1']).strip() != "":
-        user.phone1 = data['phone1']
-    if 'phone2' in data:
-        user.phone2 = data['phone2']
+    if 'name' in data and str(data['name']).strip() != "": user.name = data['name']
+    if 'lastName' in data: user.lastName = data['lastName']
+    if 'phone1' in data and str(data['phone1']).strip() != "": user.phone1 = data['phone1']
+    if 'phone2' in data: user.phone2 = data['phone2']
         
     db.session.commit()
     return jsonify({'message': 'Perfil actualizado correctamente', 'user': user.to_dict()}), 200
@@ -505,13 +501,11 @@ def request_email_change():
     data = request.get_json()
     user = User.query.get(current_user_id)
     
-    if not data or not data.get('new_email'):
-        return jsonify({'error': 'Debes proporcionar un nuevo correo válido'}), 400
+    if not data or not data.get('new_email'): return jsonify({'error': 'Debes proporcionar un nuevo correo válido'}), 400
         
     new_email = data['new_email'].strip()
     
-    if User.query.filter_by(email=new_email).first() or User.query.filter_by(pending_email=new_email).first():
-        return jsonify({'error': 'Este correo ya se encuentra registrado o en proceso de registro'}), 409
+    if User.query.filter_by(email=new_email).first() or User.query.filter_by(pending_email=new_email).first(): return jsonify({'error': 'Este correo ya se encuentra registrado o en proceso de registro'}), 409
 
     otp_code = str(random.randint(100000, 999999))
     user.pending_email = new_email
@@ -528,16 +522,10 @@ def verify_email_change():
     data = request.get_json()
     user = User.query.get(current_user_id)
     
-    if not data or not data.get('code'):
-        return jsonify({'error': 'Falta el código de verificación'}), 400
+    if not data or not data.get('code'): return jsonify({'error': 'Falta el código de verificación'}), 400
+    if not user.pending_email: return jsonify({'error': 'No hay ninguna solicitud de cambio de correo pendiente'}), 400
+    if user.verification_code != data['code']: return jsonify({'error': 'El código de verificación es incorrecto'}), 401
         
-    if not user.pending_email:
-        return jsonify({'error': 'No hay ninguna solicitud de cambio de correo pendiente'}), 400
-        
-    if user.verification_code != data['code']:
-        return jsonify({'error': 'El código de verificación es incorrecto'}), 401
-        
-    # Aplicar el cambio
     user.email = user.pending_email
     user.pending_email = None
     user.verification_code = None
@@ -553,16 +541,14 @@ def update_payment_data():
     current_user_id = get_jwt_identity()
     data = request.get_json()
     
-    if not data or not all(k in data for k in ("pm_cedula", "pm_phone", "pm_bank")):
-        return jsonify({'error': 'Faltan datos de pago móvil'}), 400
+    if not data or not all(k in data for k in ("pm_cedula", "pm_phone", "pm_bank")): return jsonify({'error': 'Faltan datos de pago móvil'}), 400
 
     user = User.query.get(current_user_id)
     user.pm_cedula = data['pm_cedula']
     user.pm_phone = data['pm_phone']
     user.pm_bank = data['pm_bank']
     
-    if user.kyc_status == 'pending':
-        user.kyc_status = 'in_progress'
+    if user.kyc_status == 'pending': user.kyc_status = 'in_progress'
         
     db.session.commit()
     return jsonify({'message': 'Datos de desembolso actualizados', 'user': user.to_dict()}), 200
@@ -575,43 +561,33 @@ def add_guarantor():
     data = request.get_json()
 
     required_fields = ['name', 'cedula', 'emergency_phone', 'email']
-    if not all(field in data for field in required_fields):
-        return jsonify({'error': 'Datos del fiador incompletos'}), 400
+    if not all(field in data for field in required_fields): return jsonify({'error': 'Datos del fiador incompletos'}), 400
 
-    if len(user.guarantors) >= 2:
-        return jsonify({'error': 'Ya has registrado el máximo de 2 fiadores'}), 400
+    if len(user.guarantors) >= 2: return jsonify({'error': 'Ya has registrado el máximo de 2 fiadores'}), 400
 
     otp_code = str(random.randint(100000, 999999))
     
     new_guarantor = Guarantor(
-        user_id=current_user_id,
-        name=data['name'],
-        cedula=data['cedula'],
-        emergency_phone=data['emergency_phone'],
-        email=data['email'],
-        verification_code=otp_code
+        user_id=current_user_id, name=data['name'], cedula=data['cedula'], emergency_phone=data['emergency_phone'],
+        email=data['email'], verification_code=otp_code
     )
     
     db.session.add(new_guarantor)
     db.session.commit()
 
     send_guarantor_email(new_guarantor.email, otp_code, f"{user.name} {user.lastName}")
-
     return jsonify({'message': 'Fiador registrado. Se ha enviado un código a su correo.', 'guarantor_id': new_guarantor.id}), 201
 
 @app.route('/api/kyc/guarantor/verify', methods=['POST'])
 @jwt_required()
 def verify_guarantor():
     data = request.get_json()
-    if not data or 'guarantor_id' not in data or 'code' not in data:
-        return jsonify({'error': 'Faltan datos'}), 400
+    if not data or 'guarantor_id' not in data or 'code' not in data: return jsonify({'error': 'Faltan datos'}), 400
 
     guarantor = Guarantor.query.get(data['guarantor_id'])
-    if not guarantor:
-        return jsonify({'error': 'Fiador no encontrado'}), 404
+    if not guarantor: return jsonify({'error': 'Fiador no encontrado'}), 404
 
-    if guarantor.verification_code != data['code']:
-        return jsonify({'error': 'Código incorrecto'}), 400
+    if guarantor.verification_code != data['code']: return jsonify({'error': 'Código incorrecto'}), 400
 
     guarantor.is_email_verified = True
     guarantor.verification_code = None
@@ -619,11 +595,12 @@ def verify_guarantor():
     user = User.query.get(guarantor.user_id)
     verified_guarantors = [g for g in user.guarantors if g.is_email_verified]
     
-    if len(verified_guarantors) >= 2:
-        user.kyc_status = 'verified'
+    # NUEVA REGLA ADMINISTRATIVA: Va a panel militar en vez de aprobarse de una vez
+    if len(verified_guarantors) >= 2 and user.kyc_status != 'verified':
+        user.kyc_status = 'pending_admin'
 
     db.session.commit()
-    return jsonify({'message': 'Fiador verificado exitosamente'}), 200
+    return jsonify({'message': 'Fiador verificado exitosamente. Esperando revisión militar.'}), 200
 
 @app.route('/api/kyc/upload', methods=['POST'])
 @jwt_required()
@@ -631,52 +608,33 @@ def upload_kyc_document():
     current_user_id = get_jwt_identity()
     user = User.query.get(current_user_id)
     
-    # --- LA MAGIA DEL CANDADO MENSUAL (30 DÍAS) ---
-    # Si tiene fecha previa, verificamos si ha pasado el tiempo.
-    # Permite ventana de 1 hora para poder subir los 4 documentos seguidos en la misma sesión.
     if user.last_kyc_update:
         time_since_update = datetime.utcnow() - user.last_kyc_update
         if timedelta(hours=1) < time_since_update < timedelta(days=30):
             return jsonify({'error': 'Solo puedes actualizar tus documentos KYC una vez cada 30 días.'}), 403
-    # ----------------------------------------------
     
-    if 'file' not in request.files or 'document_type' not in request.form:
-        return jsonify({'error': 'Falta el archivo o el tipo de documento'}), 400
+    if 'file' not in request.files or 'document_type' not in request.form: return jsonify({'error': 'Falta el archivo o el tipo de documento'}), 400
         
     file = request.files['file']
     doc_type = request.form['document_type'] 
     
-    if file.filename == '':
-        return jsonify({'error': 'Ningún archivo seleccionado'}), 400
+    if file.filename == '': return jsonify({'error': 'Ningún archivo seleccionado'}), 400
         
     if file and allowed_file(file.filename):
         file_extension = file.filename.rsplit('.', 1)[1].lower()
         filename = f"kyc/{current_user_id}/{doc_type}_{uuid.uuid4().hex[:8]}.{file_extension}"
         
         try:
-            s3_client.upload_fileobj(
-                file,
-                S3_BUCKET,
-                filename,
-                ExtraArgs={"ContentType": file.content_type}
-            )
-            
+            s3_client.upload_fileobj(file, S3_BUCKET, filename, ExtraArgs={"ContentType": file.content_type})
             file_url = f"https://{S3_BUCKET}.s3.{S3_REGION}.amazonaws.com/{filename}"
             
-            if doc_type == 'rif':
-                user.rif_url = file_url
-            elif doc_type == 'cedula_front':
-                user.cedula_front_url = file_url
-            elif doc_type == 'selfie':
-                user.selfie_url = file_url
-            elif doc_type == 'home':
-                user.home_picture_url = file_url
-            else:
-                return jsonify({'error': 'Tipo de documento no válido'}), 400
+            if doc_type == 'rif': user.rif_url = file_url
+            elif doc_type == 'cedula_front': user.cedula_front_url = file_url
+            elif doc_type == 'selfie': user.selfie_url = file_url
+            elif doc_type == 'home': user.home_picture_url = file_url
+            else: return jsonify({'error': 'Tipo de documento no válido'}), 400
                 
-            # Actualiza el reloj del candado de 30 días con cada subida
             user.last_kyc_update = datetime.utcnow()
-            
             db.session.commit()
             return jsonify({'message': 'Archivo subido a S3 correctamente', 'url': file_url}), 200
             
@@ -687,17 +645,7 @@ def upload_kyc_document():
 
     return jsonify({'error': 'Tipo de archivo no permitido'}), 400
 
-# --- ENDPOINTS PROTEGIDOS (PERFIL Y PRÉSTAMOS) ---
-
-@app.route('/api/users/me', methods=['GET'])
-@jwt_required()
-def get_my_profile():
-    current_user_id = get_jwt_identity()
-    user = User.query.get(current_user_id)
-    if not user:
-        return jsonify({'error': 'Usuario no encontrado'}), 404
-    return jsonify(user.to_dict()), 200
-
+# --- PRÉSTAMOS ---
 @app.route('/api/loans', methods=['POST'])
 @jwt_required()
 def create_loan():
@@ -706,34 +654,22 @@ def create_loan():
     data = request.get_json()
     
     if user.kyc_status != 'verified':
-        return jsonify({'error': 'Debes completar y verificar tu perfil KYC antes de solicitar un préstamo.'}), 403
+        return jsonify({'error': 'Debes completar tu perfil y esperar aprobación administrativa antes de solicitar un préstamo.'}), 403
         
     verified_guarantors = [g for g in user.guarantors if g.is_email_verified]
-    if len(verified_guarantors) < 2:
-        return jsonify({'error': 'Debes registrar y verificar los correos de al menos 2 fiadores solidarios.'}), 403
+    if len(verified_guarantors) < 2: return jsonify({'error': 'Debes registrar y verificar los correos de al menos 2 fiadores solidarios.'}), 403
 
-    if not data or 'amount' not in data or 'due_date' not in data:
-        return jsonify({'error': 'Faltan datos del préstamo'}), 400
+    if not data or 'amount' not in data or 'due_date' not in data: return jsonify({'error': 'Faltan datos del préstamo'}), 400
         
     try:
         date_str = data['due_date'].replace('Z', '+00:00')
         due_date = datetime.fromisoformat(date_str)
-    except (KeyError, ValueError):
-        return jsonify({'error': 'Formato de fecha inválido. Use ISO 8601.'}), 400
+    except (KeyError, ValueError): return jsonify({'error': 'Formato de fecha inválido. Use ISO 8601.'}), 400
 
-    if not user:
-        return jsonify({'error': 'Usuario inválido'}), 404
-        
-    if user.hasActiveLoan:
-        return jsonify({'error': 'El usuario ya tiene un préstamo activo'}), 403
+    if not user: return jsonify({'error': 'Usuario inválido'}), 404
+    if user.hasActiveLoan: return jsonify({'error': 'El usuario ya tiene un préstamo activo'}), 403
 
-    new_loan = Loan(
-        user_id=current_user_id,
-        amount=float(data['amount']),
-        interest_rate=float(data.get('interest_rate', 0.15)),
-        due_date=due_date
-    )
-    
+    new_loan = Loan(user_id=current_user_id, amount=float(data['amount']), interest_rate=float(data.get('interest_rate', 0.15)), due_date=due_date)
     user.hasActiveLoan = True
 
     try:
@@ -750,66 +686,145 @@ def get_my_loans():
     current_user_id = get_jwt_identity()
     loans = Loan.query.filter_by(user_id=current_user_id).all()
     return jsonify([loan.to_dict() for loan in loans]), 200
-# --- NUEVO ENDPOINT: REPORTE DE PAGOS ---
+
+# --- REPORTE DE PAGOS INMUTABLE ---
 @app.route('/api/loans/pay', methods=['POST'])
 @jwt_required()
 def report_payment():
     current_user_id = get_jwt_identity()
     user = User.query.get(current_user_id)
     
-    if not user:
-        return jsonify({'error': 'Usuario no encontrado'}), 404
-
-    # Verificar que tiene un préstamo activo
-    if not user.hasActiveLoan:
-        return jsonify({'error': 'No tienes préstamos activos para pagar'}), 400
-
-    if 'file' not in request.files:
-        return jsonify({'error': 'Falta el comprobante de pago'}), 400
+    if not user: return jsonify({'error': 'Usuario no encontrado'}), 404
+    if not user.hasActiveLoan: return jsonify({'error': 'No tienes préstamos activos para pagar'}), 400
+    if 'file' not in request.files: return jsonify({'error': 'Falta el comprobante de pago'}), 400
         
     file = request.files['file']
     payment_method = request.form.get('payment_method', 'transferencia')
     reference_number = request.form.get('reference_number', '')
     
-    if file.filename == '':
-        return jsonify({'error': 'Ningún archivo seleccionado'}), 400
+    if file.filename == '': return jsonify({'error': 'Ningún archivo seleccionado'}), 400
         
     if file and allowed_file(file.filename):
         file_extension = file.filename.rsplit('.', 1)[1].lower()
-        # Se guarda en una carpeta separada 'payments'
         filename = f"payments/{current_user_id}/receipt_{uuid.uuid4().hex[:8]}.{file_extension}"
         
         try:
-            # Subir a Amazon S3
-            s3_client.upload_fileobj(
-                file,
-                S3_BUCKET,
-                filename,
-                ExtraArgs={"ContentType": file.content_type}
-            )
-            
+            s3_client.upload_fileobj(file, S3_BUCKET, filename, ExtraArgs={"ContentType": file.content_type})
             receipt_url = f"https://{S3_BUCKET}.s3.{S3_REGION}.amazonaws.com/{filename}"
             
-            # --- LÓGICA DE NEGOCIO ---
-            # Aquí idealmente se crea un registro en una tabla 'Payments'. 
-            # Por ahora, simplemente actualizaremos el estado del usuario.
-            # Cambiamos a false para que la app entienda que el préstamo "ya no está activo" 
-            # y pase a estado de "Validando" (esto lo refinaremos en el backoffice).
-            user.hasActiveLoan = False 
+            # Buscamos el préstamo activo
+            loan = Loan.query.filter_by(user_id=current_user_id, status='active').first()
+            if loan:
+                loan.status = 'pending_payment'
+                loan.receipt_url = receipt_url
+                
+                # REGISTRAMOS EL PAGO INMUTABLE EN LA TABLA
+                new_payment = Payment(
+                    loan_id=loan.id,
+                    user_id=user.id,
+                    payment_method=payment_method,
+                    reference_number=reference_number,
+                    receipt_url=receipt_url
+                )
+                db.session.add(new_payment)
             
+            # IMPORTANTE: No se libera el hasActiveLoan todavía. El usuario queda bloqueado hasta que el admin audite.
             db.session.commit()
+            return jsonify({'message': 'Pago reportado con éxito. En revisión militar.', 'receipt_url': receipt_url}), 200
             
-            return jsonify({
-                'message': 'Pago reportado con éxito. En revisión.', 
-                'receipt_url': receipt_url
-            }), 200
-            
-        except NoCredentialsError:
-            return jsonify({'error': 'Credenciales de AWS no válidas'}), 500
-        except Exception as e:
-            return jsonify({'error': f'Error subiendo comprobante: {str(e)}'}), 500
+        except NoCredentialsError: return jsonify({'error': 'Credenciales de AWS no válidas'}), 500
+        except Exception as e: return jsonify({'error': f'Error subiendo comprobante: {str(e)}'}), 500
 
     return jsonify({'error': 'Tipo de archivo no permitido'}), 400
+
+
+# ==========================================
+# RUTAS DE ADMINISTRACIÓN (BACKOFFICE MILITAR)
+# ==========================================
+
+@app.route('/api/admin/dashboard', methods=['GET'])
+@jwt_required()
+def admin_dashboard():
+    user = User.query.get(get_jwt_identity())
+    if not user or not is_admin(user): return jsonify({'error': 'Acceso Administrativo Denegado'}), 403
+
+    pending_kyc = User.query.filter_by(kyc_status='pending_admin').all()
+    pending_payments = Payment.query.filter_by(status='pending').all()
+    overdue_loans = Loan.query.filter(Loan.status == 'active', Loan.due_date < datetime.utcnow()).all()
+
+    return jsonify({
+        'pending_kyc_users': [u.to_dict() for u in pending_kyc],
+        'pending_payments': [{'payment': p.to_dict(), 'user': User.query.get(p.user_id).to_dict(), 'loan': Loan.query.get(p.loan_id).to_dict()} for p in pending_payments],
+        'overdue_loans': [l.to_dict() for l in overdue_loans]
+    }), 200
+
+@app.route('/api/admin/users/<user_id>/review_kyc', methods=['POST'])
+@jwt_required()
+def review_kyc(user_id):
+    admin = User.query.get(get_jwt_identity())
+    if not admin or not is_admin(admin): return jsonify({'error': 'Acceso Denegado'}), 403
+    
+    data = request.get_json()
+    action = data.get('action') 
+    
+    target_user = User.query.get(user_id)
+    if not target_user: return jsonify({'error': 'Usuario no encontrado'}), 404
+    
+    if action == 'approve':
+        target_user.kyc_status = 'verified'
+        msg = f"Identidad de {target_user.name} aprobada. Límite habilitado."
+    else:
+        target_user.kyc_status = 'rejected'
+        msg = f"Identidad de {target_user.name} rechazada."
+        
+    db.session.commit()
+    return jsonify({'message': msg}), 200
+
+@app.route('/api/admin/payments/<payment_id>/review', methods=['POST'])
+@jwt_required()
+def review_payment(payment_id):
+    admin = User.query.get(get_jwt_identity())
+    if not admin or not is_admin(admin): return jsonify({'error': 'Acceso Denegado'}), 403
+    
+    data = request.get_json()
+    action = data.get('action') 
+    
+    payment = Payment.query.get(payment_id)
+    if not payment: return jsonify({'error': 'Pago no encontrado'}), 404
+    
+    loan = Loan.query.get(payment.loan_id)
+    user = User.query.get(payment.user_id)
+    
+    if action == 'approve':
+        payment.status = 'approved'
+        loan.status = 'liquidated'
+        user.hasActiveLoan = False # Liberamos al deudor para pedir otro préstamo
+        msg = f"Pago validado. Préstamo de {user.name} liquidado."
+    else:
+        payment.status = 'rejected'
+        loan.status = 'active' # Vuelve a estar activo porque el recibo fue rechazado
+        user.hasActiveLoan = True
+        msg = f"Recibo rechazado. El préstamo vuelve a estar activo y la persona bloqueada."
+        
+    db.session.commit()
+    return jsonify({'message': msg}), 200
+
+@app.route('/api/admin/cron/morosidad', methods=['POST'])
+@jwt_required()
+def trigger_morosidad():
+    admin = User.query.get(get_jwt_identity())
+    if not admin or not is_admin(admin): return jsonify({'error': 'Acceso Denegado'}), 403
+    
+    hoy = datetime.utcnow()
+    expired_loans = Loan.query.filter(Loan.status == 'active', Loan.due_date < hoy).all()
+    
+    for loan in expired_loans:
+        penalidad = loan.amount * 0.10 # Castigo del 10%
+        loan.amount += penalidad
+        loan.due_date = loan.due_date + timedelta(days=3)
+        
+    db.session.commit()
+    return jsonify({'message': f'Penalización de mora aplicada a {len(expired_loans)} deudores.'}), 200
 
 # Inicialización de la base de datos
 with app.app_context():
