@@ -237,6 +237,9 @@ class User(db.Model):
     payments = db.relationship('Payment', backref='user', lazy=True) 
 
     def to_dict(self):
+        # MOTOR MATEMÁTICO: Calcula la deuda real iterando préstamos activos
+        current_debt = sum(l.amount for l in self.loans if l.status == 'active')
+
         return {
             'id': self.id,
             'name': self.name,
@@ -247,7 +250,8 @@ class User(db.Model):
             'email': self.email,
             'creditLevel': self.creditLevel,
             'maxCreditAllowed': self.maxCreditAllowed,
-            'hasActiveLoan': self.hasActiveLoan,
+            'current_debt': current_debt, # INYECCIÓN CRÍTICA PARA FLUTTER
+            'hasActiveLoan': current_debt > 0, # ESTADO DINÁMICO
             'is_verified': self.is_verified,
             'kyc_status': self.kyc_status,
             'cedula_front_url': self.cedula_front_url,
@@ -307,7 +311,6 @@ class Loan(db.Model):
     interest_rate = db.Column(db.Float, nullable=False)
     due_date = db.Column(db.DateTime, nullable=False)
     
-    # NUEVOS CAMPOS DEL PRÉSTAMO
     status = db.Column(db.String(20), default='active') 
     receipt_url = db.Column(db.String(255), nullable=True)
     payments = db.relationship('Payment', backref='loan', lazy=True)
@@ -324,13 +327,13 @@ class Loan(db.Model):
             'payment_history': [p.to_dict() for p in self.payments]
         }
 
-# --- NUEVA TABLA: HISTORIAL DE PAGOS INMUTABLE ---
 class Payment(db.Model):
     __tablename__ = 'payments'
     id = db.Column(db.String(100), primary_key=True, default=lambda: str(uuid.uuid4()))
     loan_id = db.Column(db.String(100), db.ForeignKey('loans.id'), nullable=False)
     user_id = db.Column(db.String(100), db.ForeignKey('users.id'), nullable=False)
     
+    amount = db.Column(db.Float, nullable=False, default=0.0) # NUEVO: MONTO DE ABONO
     payment_method = db.Column(db.String(50), nullable=False)
     reference_number = db.Column(db.String(100), nullable=False)
     receipt_url = db.Column(db.String(255), nullable=False)
@@ -340,7 +343,7 @@ class Payment(db.Model):
 
     def to_dict(self):
         return {
-            'id': self.id, 'loan_id': self.loan_id, 'method': self.payment_method,
+            'id': self.id, 'loan_id': self.loan_id, 'amount': self.amount, 'method': self.payment_method,
             'reference': self.reference_number, 'receipt_url': self.receipt_url,
             'status': self.status, 'date': self.created_at.isoformat()
         }
@@ -644,7 +647,7 @@ def upload_kyc_document():
 
     return jsonify({'error': 'Tipo de archivo no permitido'}), 400
 
-# --- PRÉSTAMOS ---
+# --- PRÉSTAMOS ROTATIVOS Y PAGOS EXACTOS ---
 @app.route('/api/loans', methods=['POST'])
 @jwt_required()
 def create_loan():
@@ -661,14 +664,19 @@ def create_loan():
     if not data or 'amount' not in data or 'due_date' not in data: return jsonify({'error': 'Faltan datos del préstamo'}), 400
         
     try:
+        requested_amount = float(data['amount'])
         date_str = data['due_date'].replace('Z', '+00:00')
         due_date = datetime.fromisoformat(date_str)
-    except (KeyError, ValueError): return jsonify({'error': 'Formato de fecha inválido. Use ISO 8601.'}), 400
+    except (KeyError, ValueError): return jsonify({'error': 'Formato de fecha o monto inválido.'}), 400
 
     if not user: return jsonify({'error': 'Usuario inválido'}), 404
-    if user.hasActiveLoan: return jsonify({'error': 'El usuario ya tiene un préstamo activo'}), 403
 
-    new_loan = Loan(user_id=current_user_id, amount=float(data['amount']), interest_rate=float(data.get('interest_rate', 0.15)), due_date=due_date)
+    # LÓGICA DE ROTACIÓN: Valida si la suma del préstamo anterior + el nuevo supera el límite.
+    current_debt = sum(l.amount for l in user.loans if l.status == 'active')
+    if current_debt + requested_amount > user.maxCreditAllowed:
+        return jsonify({'error': 'Fondos insuficientes. Límite de crédito excedido.'}), 400
+
+    new_loan = Loan(user_id=current_user_id, amount=requested_amount, interest_rate=float(data.get('interest_rate', 0.15)), due_date=due_date)
     user.hasActiveLoan = True
 
     try:
@@ -686,7 +694,6 @@ def get_my_loans():
     loans = Loan.query.filter_by(user_id=current_user_id).all()
     return jsonify([loan.to_dict() for loan in loans]), 200
 
-# --- REPORTE DE PAGOS INMUTABLE ---
 @app.route('/api/loans/pay', methods=['POST'])
 @jwt_required()
 def report_payment():
@@ -694,12 +701,24 @@ def report_payment():
     user = User.query.get(current_user_id)
     
     if not user: return jsonify({'error': 'Usuario no encontrado'}), 404
-    if not user.hasActiveLoan: return jsonify({'error': 'No tienes préstamos activos para pagar'}), 400
+    
+    current_debt = sum(l.amount for l in user.loans if l.status == 'active')
+    if current_debt <= 0: return jsonify({'error': 'No tienes deudas activas para pagar'}), 400
+    
     if 'file' not in request.files: return jsonify({'error': 'Falta el comprobante de pago'}), 400
         
     file = request.files['file']
     payment_method = request.form.get('payment_method', 'transferencia')
     reference_number = request.form.get('reference_number', '')
+    
+    # RECEPCIÓN DEL MONTO EXACTO QUE EL CLIENTE ELIGIÓ PAGAR
+    try:
+        amount_paid = float(request.form.get('amount', 0))
+    except ValueError:
+        return jsonify({'error': 'Monto inválido'}), 400
+        
+    if amount_paid <= 0:
+        return jsonify({'error': 'El monto a pagar debe ser mayor a 0'}), 400
     
     if file.filename == '': return jsonify({'error': 'Ningún archivo seleccionado'}), 400
         
@@ -711,14 +730,14 @@ def report_payment():
             s3_client.upload_fileobj(file, S3_BUCKET, filename, ExtraArgs={"ContentType": file.content_type})
             receipt_url = f"https://{S3_BUCKET}.s3.{S3_REGION}.amazonaws.com/{filename}"
             
-            loan = Loan.query.filter_by(user_id=current_user_id, status='active').first()
+            # Buscamos un préstamo activo para asociar el recibo, pero NO le cambiamos el estado.
+            # El estado 'active' debe mantenerse para que la deuda siga reflejándose hasta que el admin audite el pago.
+            loan = Loan.query.filter_by(user_id=current_user_id, status='active').order_by(Loan.due_date).first()
             if loan:
-                loan.status = 'pending_payment'
-                loan.receipt_url = receipt_url
-                
                 new_payment = Payment(
                     loan_id=loan.id,
                     user_id=user.id,
+                    amount=amount_paid, # SE REGISTRA EL MONTO EXACTO
                     payment_method=payment_method,
                     reference_number=reference_number,
                     receipt_url=receipt_url
@@ -787,19 +806,34 @@ def review_payment(payment_id):
     payment = Payment.query.get(payment_id)
     if not payment: return jsonify({'error': 'Pago no encontrado'}), 404
     
-    loan = Loan.query.get(payment.loan_id)
     user = User.query.get(payment.user_id)
     
     if action == 'approve':
         payment.status = 'approved'
-        loan.status = 'liquidated'
-        user.hasActiveLoan = False 
-        msg = f"Pago validado. Préstamo de {user.name} liquidado."
+        amount_to_apply = payment.amount
+        
+        # MOTOR DE AMORTIZACIÓN FIFO: Aplica el dinero descontando de los préstamos activos más antiguos primero
+        active_loans = Loan.query.filter_by(user_id=user.id, status='active').order_by(Loan.due_date).all()
+        for loan in active_loans:
+            if amount_to_apply <= 0: 
+                break
+                
+            if loan.amount <= amount_to_apply:
+                amount_to_apply -= loan.amount
+                loan.amount = 0
+                loan.status = 'liquidated'
+            else:
+                loan.amount -= amount_to_apply
+                amount_to_apply = 0
+                
+        remaining_debt = sum(l.amount for l in user.loans if l.status == 'active')
+        if remaining_debt <= 0:
+            user.hasActiveLoan = False 
+            
+        msg = f"Abono de ${payment.amount} liquidado. Deuda restante del cliente: ${remaining_debt}"
     else:
         payment.status = 'rejected'
-        loan.status = 'active' 
-        user.hasActiveLoan = True
-        msg = f"Recibo rechazado. El préstamo vuelve a estar activo y la persona bloqueada."
+        msg = "Recibo rechazado. La deuda se mantiene igual."
         
     db.session.commit()
     return jsonify({'message': msg}), 200

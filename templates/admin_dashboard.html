@@ -2,13 +2,14 @@
 <html lang="es" data-bs-theme="dark">
 <head>
     <meta charset="UTF-8">
-    <title>Veyra Money | Backoffice</title>
+    <title>Veyra Money | Mando Central</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         body { background-color: #102027; }
         .card { background-color: #1A3039; border: 1px solid rgba(255,255,255,0.1); }
         .text-cyan { color: #00E5FF; }
         .btn-cyan { background-color: #00E5FF; color: black; font-weight: bold; }
+        button:disabled { opacity: 0.6; cursor: not-allowed; }
     </style>
 </head>
 <body>
@@ -18,7 +19,7 @@
         <div class="card p-4">
             <input type="email" id="email" class="form-control mb-3 bg-dark text-white" placeholder="Correo Administrador">
             <input type="password" id="password" class="form-control mb-3 bg-dark text-white" placeholder="Contraseña">
-            <button class="btn btn-cyan w-100" onclick="login()">ACCEDER AL MANDO</button>
+            <button class="btn btn-cyan w-100" onclick="login(this)" id="btnLogin">ACCEDER AL MANDO</button>
             <div id="login-error" class="text-danger mt-2 text-center"></div>
         </div>
     </div>
@@ -35,7 +36,10 @@
             <button class="nav-link active text-white bg-transparent" id="kyc-tab" data-bs-toggle="tab" data-bs-target="#kyc" type="button">1. Auditoría KYC</button>
           </li>
           <li class="nav-item" role="presentation">
-            <button class="nav-link text-white bg-transparent" id="pagos-tab" data-bs-toggle="tab" data-bs-target="#pagos" type="button">2. Liquidación de Pagos</button>
+            <button class="nav-link text-white bg-transparent" id="pagos-tab" data-bs-toggle="tab" data-bs-target="#pagos" type="button">2. Liquidación</button>
+          </li>
+          <li class="nav-item" role="presentation">
+            <button class="nav-link text-white bg-transparent" id="morosidad-tab" data-bs-toggle="tab" data-bs-target="#morosidad" type="button">3. Morosidad</button>
           </li>
         </ul>
 
@@ -47,6 +51,14 @@
           <!-- PESTAÑA PAGOS -->
           <div class="tab-pane fade" id="pagos" role="tabpanel">
             <div id="pagos-list" class="row"></div>
+          </div>
+          <!-- PESTAÑA MOROSIDAD -->
+          <div class="tab-pane fade" id="morosidad" role="tabpanel">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="text-white">Préstamos Vencidos (Tardíos)</h5>
+                <button class="btn btn-danger btn-sm" onclick="aplicarPenalidad(this)">Aplicar Penalidad (10%) a Todos</button>
+            </div>
+            <div id="morosidad-list" class="row"></div>
           </div>
         </div>
     </div>
@@ -61,10 +73,13 @@
             }
         };
 
-        async function login() {
+        async function login(btn) {
             const email = document.getElementById('email').value;
             const password = document.getElementById('password').value;
             
+            btn.disabled = true;
+            btn.innerText = "VERIFICANDO...";
+
             try {
                 const res = await fetch(`${API_URL}/auth/login`, {
                     method: 'POST',
@@ -81,6 +96,9 @@
                 }
             } catch (e) {
                 document.getElementById('login-error').innerText = 'Error de conexión.';
+            } finally {
+                btn.disabled = false;
+                btn.innerText = "ACCEDER AL MANDO";
             }
         }
 
@@ -108,13 +126,13 @@
             const data = await res.json();
             renderKyc(data.pending_kyc_users);
             renderPayments(data.pending_payments);
+            renderMorosidad(data.overdue_loans);
         }
 
         function renderKyc(users) {
             const container = document.getElementById('kyc-list');
-            if(!users || users.length === 0) { container.innerHTML = '<p class="text-white-50">No hay perfiles pendientes.</p>'; return; }
+            if(!users || users.length === 0) { container.innerHTML = '<p class="text-white-50">No hay perfiles pendientes de auditoría.</p>'; return; }
             
-            // CORRECCIÓN: Se extraen las URLs directamente del objeto user
             container.innerHTML = users.map(user => `
                 <div class="col-md-6 mb-4">
                     <div class="card p-3">
@@ -126,8 +144,8 @@
                             <a href="${user.rif_url}" target="_blank" class="btn btn-sm btn-outline-info">Ver RIF</a>
                         </div>
                         <div class="d-flex gap-2">
-                            <button class="btn btn-danger w-50" onclick="actionKyc('${user.id}', 'reject')">RECHAZAR</button>
-                            <button class="btn btn-success w-50" onclick="actionKyc('${user.id}', 'approve')">APROBAR</button>
+                            <button class="btn btn-danger w-50" onclick="actionKyc('${user.id}', 'reject', this)">RECHAZAR</button>
+                            <button class="btn btn-success w-50" onclick="actionKyc('${user.id}', 'approve', this)">APROBAR</button>
                         </div>
                     </div>
                 </div>
@@ -142,40 +160,87 @@
                 <div class="col-md-6 mb-4">
                     <div class="card p-3">
                         <h5>Pago de ${item.user.name}</h5>
-                        <h4 class="text-warning">Deuda: $${item.loan.amount}</h4>
+                        <h4 class="text-warning">Monto a Liquidar: $${item.payment.amount}</h4>
                         <p class="mb-1 text-white-50">Método: ${item.payment.method} | Ref: ${item.payment.reference}</p>
                         <div class="my-3">
                             <a href="${item.payment.receipt_url}" target="_blank" class="btn btn-sm btn-outline-info w-100">Ver Recibo (S3)</a>
                         </div>
                         <div class="d-flex gap-2">
-                            <button class="btn btn-danger w-50" onclick="actionPayment('${item.payment.id}', 'reject')">ES FALSO</button>
-                            <button class="btn btn-success w-50" onclick="actionPayment('${item.payment.id}', 'approve')">LIQUIDAR</button>
+                            <button class="btn btn-danger w-50" onclick="actionPayment('${item.payment.id}', 'reject', this)">FALSO</button>
+                            <button class="btn btn-success w-50" onclick="actionPayment('${item.payment.id}', 'approve', this)">LIQUIDAR</button>
                         </div>
                     </div>
                 </div>
             `).join('');
         }
 
-        async function actionKyc(id, action) {
+        function renderMorosidad(loans) {
+            const container = document.getElementById('morosidad-list');
+            if(!loans || loans.length === 0) { container.innerHTML = '<p class="text-white-50">Sistema sano. No hay deudas vencidas.</p>'; return; }
+            
+            container.innerHTML = loans.map(loan => `
+                <div class="col-md-4 mb-4">
+                    <div class="card p-3 border border-danger">
+                        <h5 class="text-danger">ID de Préstamo:</h5>
+                        <p class="text-white-50" style="font-size: 0.75rem;">${loan.id}</p>
+                        <h3 class="text-white mt-2">Deuda: $${loan.amount}</h3>
+                        <p class="mb-0 text-white-50">Venció el: ${new Date(loan.due_date).toLocaleDateString()}</p>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function actionKyc(id, action, btn) {
             if(!confirm(`¿Estás seguro de ${action === 'approve' ? 'APROBAR' : 'RECHAZAR'} este perfil?`)) return;
+            btn.disabled = true;
+            btn.innerText = "Procesando...";
+
             const token = localStorage.getItem('admin_token');
-            await fetch(`${API_URL}/admin/users/${id}/review_kyc`, {
+            const res = await fetch(`${API_URL}/admin/users/${id}/review_kyc`, {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`},
                 body: JSON.stringify({action})
             });
+            
+            const data = await res.json();
+            alert(data.message);
             loadData();
         }
 
-        async function actionPayment(id, action) {
+        async function actionPayment(id, action, btn) {
             if(!confirm(`¿Estás seguro de ${action === 'approve' ? 'LIQUIDAR' : 'RECHAZAR'} este pago?`)) return;
+            btn.disabled = true;
+            btn.innerText = "Procesando...";
+
             const token = localStorage.getItem('admin_token');
-            await fetch(`${API_URL}/admin/payments/${id}/review`, {
+            const res = await fetch(`${API_URL}/admin/payments/${id}/review`, {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`},
                 body: JSON.stringify({action})
             });
+            
+            const data = await res.json();
+            alert(data.message);
             loadData();
+        }
+
+        async function aplicarPenalidad(btn) {
+            if(!confirm('¿Estás seguro de castigar con 10% de mora a TODOS los préstamos vencidos mostrados abajo?')) return;
+            btn.disabled = true;
+            btn.innerText = "Aplicando castigo...";
+
+            const token = localStorage.getItem('admin_token');
+            const res = await fetch(`${API_URL}/admin/cron/morosidad`, {
+                method: 'POST',
+                headers: {'Authorization': `Bearer ${token}`}
+            });
+            
+            const data = await res.json();
+            alert(data.message);
+            loadData();
+            
+            btn.disabled = false;
+            btn.innerText = "Aplicar Penalidad (10%) a Todos";
         }
     </script>
 </body>
