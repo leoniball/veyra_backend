@@ -2,48 +2,123 @@
 <html lang="es" data-bs-theme="dark">
 <head>
     <meta charset="UTF-8">
-    <title>Veyra Money | Mando Central</title>
+    <title>Veyra Money | Administrativo</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        body { background-color: #102027; }
-        .card { background-color: #1A3039; border: 1px solid rgba(255,255,255,0.1); }
-        .text-cyan { color: #00E5FF; }
-        .btn-cyan { background-color: #00E5FF; color: black; font-weight: bold; }
+        body { 
+            background-color: #081014; 
+            font-family: 'Segoe UI', system-ui, sans-serif; 
+        }
+        .card { 
+            background-color: #0f1c24; 
+            border: 1px solid rgba(0, 102, 255, 0.15); 
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5); 
+            border-radius: 20px;
+        }
+        .text-gradient {
+    background: linear-gradient(90deg, #0055ff, #00E5FF);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    font-weight: 900;
+}
+        .btn-veyra {
+            background: linear-gradient(90deg, #0055ff, #00E5FF);
+            color: white;
+            font-weight: bold;
+            border: none;
+            transition: 0.3s;
+            border-radius: 12px;
+            padding: 10px;
+        }
+        .btn-veyra:hover {
+            box-shadow: 0 0 15px rgba(0, 229, 255, 0.5);
+            color: white;
+        }
         button:disabled { opacity: 0.6; cursor: not-allowed; }
+        
+        .logo-container {
+            width: 110px; 
+            height: 110px;
+            margin: 0 auto 20px;
+            border-radius: 24px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0, 85, 255, 0.4);
+            border: 2px solid rgba(255,255,255,0.1);
+        }
+        .logo-container img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        
+        .nav-tabs { border-bottom: 1px solid rgba(255,255,255,0.1); }
+        .nav-tabs .nav-link { color: rgba(255,255,255,0.6); border: none; }
+        .nav-tabs .nav-link:hover { color: white; }
+        .nav-tabs .nav-link.active {
+            background-color: transparent !important;
+            border-bottom: 3px solid #00E5FF;
+            color: #00E5FF !important;
+            font-weight: bold;
+        }
+        
+        .form-control {
+            background-color: rgba(255,255,255,0.05) !important;
+            border: 1px solid rgba(255,255,255,0.1);
+            color: white !important;
+            border-radius: 12px;
+            padding: 12px;
+        }
+        .form-control:focus {
+            box-shadow: 0 0 0 0.25rem rgba(0, 229, 255, 0.25);
+            border-color: #00E5FF;
+        }
     </style>
 </head>
 <body>
     <!-- PANTALLA DE LOGIN -->
-    <div class="container mt-5" id="login-section" style="max-width: 400px;">
-        <h2 class="mb-4 text-cyan text-center">Acceso Militar Veyra</h2>
+    <div class="container mt-5" id="login-section" style="max-width: 400px; padding-top: 5vh;">
+        <!-- CONTENEDOR DEL LOGO -->
+        <div class="logo-container">
+            <!-- AQUÍ VA LA RUTA DE TU IMAGEN -->
+            <img src="/static/logo_veyra.jpg" alt="Logo Veyra">
+        </div>
+        
+        <h2 class="mb-4 text-gradient text-center">Acceso Administrativo Veyra</h2>
+        
         <div class="card p-4">
-            <input type="email" id="email" class="form-control mb-3 bg-dark text-white" placeholder="Correo Administrador">
-            <input type="password" id="password" class="form-control mb-3 bg-dark text-white" placeholder="Contraseña">
-            <button class="btn btn-cyan w-100" onclick="login(this)" id="btnLogin">ACCEDER AL MANDO</button>
-            <div id="login-error" class="text-danger mt-2 text-center"></div>
+            <input type="email" id="email" class="form-control mb-3" placeholder="Correo Autorizado">
+            <input type="password" id="password" class="form-control mb-4" placeholder="Contraseña">
+            <button class="btn btn-veyra w-100" onclick="login(this)" id="btnLogin">INICIAR SESIÓN</button>
+            <div id="login-error" class="text-danger mt-3 text-center fw-bold"></div>
         </div>
     </div>
 
     <!-- PANEL PRINCIPAL -->
     <div class="container mt-5 d-none" id="dashboard-section">
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <h2 class="text-cyan">Centro de Auditoría</h2>
-            <button class="btn btn-outline-danger btn-sm" onclick="logout()">Cerrar Sesión</button>
+        <div class="d-flex justify-content-between align-items-center mb-4 bg-dark p-3 rounded-4" style="background-color: #0f1c24 !important; border: 1px solid rgba(0, 102, 255, 0.15);">
+            <div class="d-flex align-items-center gap-3">
+                <div style="width: 50px; height: 50px; border-radius: 12px; overflow: hidden;">
+                    <img src="/static/logo_veyra.jpg" alt="Logo" style="width: 100%; height: 100%; object-fit: cover;">
+                </div>
+                <h2 class="text-gradient mb-0">Centro de Auditoría</h2>
+            </div>
+            <button class="btn btn-outline-danger btn-sm rounded-3 px-3" onclick="logout()">Cerrar Sesión</button>
         </div>
         
-        <ul class="nav nav-tabs" id="myTab" role="tablist">
+        <ul class="nav nav-tabs mb-4" id="myTab" role="tablist">
           <li class="nav-item" role="presentation">
-            <button class="nav-link active text-white bg-transparent" id="kyc-tab" data-bs-toggle="tab" data-bs-target="#kyc" type="button">1. Auditoría KYC</button>
+            <button class="nav-link active" id="kyc-tab" data-bs-toggle="tab" data-bs-target="#kyc" type="button">1. Auditoría KYC</button>
           </li>
           <li class="nav-item" role="presentation">
-            <button class="nav-link text-white bg-transparent" id="pagos-tab" data-bs-toggle="tab" data-bs-target="#pagos" type="button">2. Liquidación</button>
+            <button class="nav-link" id="pagos-tab" data-bs-toggle="tab" data-bs-target="#pagos" type="button">2. Liquidación</button>
           </li>
           <li class="nav-item" role="presentation">
-            <button class="nav-link text-white bg-transparent" id="morosidad-tab" data-bs-toggle="tab" data-bs-target="#morosidad" type="button">3. Morosidad</button>
+            <button class="nav-link" id="morosidad-tab" data-bs-toggle="tab" data-bs-target="#morosidad" type="button">3. Morosidad</button>
           </li>
         </ul>
 
-        <div class="tab-content mt-4" id="myTabContent">
+        <div class="tab-content" id="myTabContent">
           <!-- PESTAÑA KYC -->
           <div class="tab-pane fade show active" id="kyc" role="tabpanel">
             <div id="kyc-list" class="row"></div>
@@ -54,9 +129,12 @@
           </div>
           <!-- PESTAÑA MOROSIDAD -->
           <div class="tab-pane fade" id="morosidad" role="tabpanel">
-            <div class="d-flex justify-content-between align-items-center mb-3">
-                <h5 class="text-white">Préstamos Vencidos (Tardíos)</h5>
-                <button class="btn btn-danger btn-sm" onclick="aplicarPenalidad(this)">Aplicar Penalidad (10%) a Todos</button>
+            <div class="d-flex justify-content-between align-items-center mb-4 bg-danger bg-opacity-10 p-3 rounded-4 border border-danger border-opacity-25">
+                <div>
+                    <h5 class="text-white mb-1">Préstamos Vencidos (Tardíos)</h5>
+                    <p class="text-white-50 mb-0 small">Se aplicará un cargo automático por mora a los usuarios listados.</p>
+                </div>
+                <button class="btn btn-danger btn-sm rounded-3 fw-bold px-3 py-2" onclick="aplicarPenalidad(this)">Aplicar Penalidad (10%) a Todos</button>
             </div>
             <div id="morosidad-list" class="row"></div>
           </div>
@@ -92,13 +170,13 @@
                     localStorage.setItem('admin_token', data.token);
                     showDashboard();
                 } else {
-                    document.getElementById('login-error').innerText = data.error || 'Acceso denegado.';
+                    document.getElementById('login-error').innerText = data.error || 'Acceso denegado. No tienes permisos.';
                 }
             } catch (e) {
-                document.getElementById('login-error').innerText = 'Error de conexión.';
+                document.getElementById('login-error').innerText = 'Error de conexión con el servidor.';
             } finally {
                 btn.disabled = false;
-                btn.innerText = "ACCEDER AL MANDO";
+                btn.innerText = "INICIAR SESIÓN";
             }
         }
 
@@ -107,6 +185,7 @@
             document.getElementById('dashboard-section').classList.add('d-none');
             document.getElementById('login-section').classList.remove('d-none');
             document.getElementById('password').value = '';
+            document.getElementById('login-error').innerText = '';
         }
 
         function showDashboard() {
@@ -131,21 +210,21 @@
 
         function renderKyc(users) {
             const container = document.getElementById('kyc-list');
-            if(!users || users.length === 0) { container.innerHTML = '<p class="text-white-50">No hay perfiles pendientes de auditoría.</p>'; return; }
+            if(!users || users.length === 0) { container.innerHTML = '<div class="col-12 text-center py-5"><h5 class="text-white-50">No hay perfiles pendientes de auditoría.</h5></div>'; return; }
             
             container.innerHTML = users.map(user => `
                 <div class="col-md-6 mb-4">
-                    <div class="card p-3">
-                        <h5>${user.name} ${user.lastName}</h5>
-                        <p class="mb-1 text-white-50">Cédula: ${user.documentId} | Telf: ${user.phone1}</p>
-                        <div class="d-flex gap-2 my-3">
-                            <a href="${user.cedula_front_url}" target="_blank" class="btn btn-sm btn-outline-info">Ver Cédula</a>
-                            <a href="${user.selfie_url}" target="_blank" class="btn btn-sm btn-outline-info">Ver Selfie</a>
-                            <a href="${user.rif_url}" target="_blank" class="btn btn-sm btn-outline-info">Ver RIF</a>
+                    <div class="card p-4 h-100">
+                        <h5 class="text-white mb-1">${user.name} ${user.lastName}</h5>
+                        <p class="mb-3 text-white-50 small">Cédula: ${user.documentId} | Telf: ${user.phone1}</p>
+                        <div class="d-flex gap-2 mb-4">
+                            <a href="${user.cedula_front_url}" target="_blank" class="btn btn-sm btn-outline-info flex-fill rounded-3">Ver Cédula</a>
+                            <a href="${user.selfie_url}" target="_blank" class="btn btn-sm btn-outline-info flex-fill rounded-3">Ver Selfie</a>
+                            <a href="${user.rif_url}" target="_blank" class="btn btn-sm btn-outline-info flex-fill rounded-3">Ver RIF</a>
                         </div>
-                        <div class="d-flex gap-2">
-                            <button class="btn btn-danger w-50" onclick="actionKyc('${user.id}', 'reject', this)">RECHAZAR</button>
-                            <button class="btn btn-success w-50" onclick="actionKyc('${user.id}', 'approve', this)">APROBAR</button>
+                        <div class="d-flex gap-2 mt-auto">
+                            <button class="btn btn-danger flex-fill rounded-3 fw-bold" onclick="actionKyc('${user.id}', 'reject', this)">RECHAZAR</button>
+                            <button class="btn btn-success flex-fill rounded-3 fw-bold" onclick="actionKyc('${user.id}', 'approve', this)">APROBAR</button>
                         </div>
                     </div>
                 </div>
@@ -154,20 +233,24 @@
 
         function renderPayments(payments) {
             const container = document.getElementById('pagos-list');
-            if(!payments || payments.length === 0) { container.innerHTML = '<p class="text-white-50">No hay pagos reportados.</p>'; return; }
+            if(!payments || payments.length === 0) { container.innerHTML = '<div class="col-12 text-center py-5"><h5 class="text-white-50">No hay pagos reportados pendientes.</h5></div>'; return; }
             
             container.innerHTML = payments.map(item => `
                 <div class="col-md-6 mb-4">
-                    <div class="card p-3">
-                        <h5>Pago de ${item.user.name}</h5>
-                        <h4 class="text-warning">Monto a Liquidar: $${item.payment.amount}</h4>
-                        <p class="mb-1 text-white-50">Método: ${item.payment.method} | Ref: ${item.payment.reference}</p>
-                        <div class="my-3">
-                            <a href="${item.payment.receipt_url}" target="_blank" class="btn btn-sm btn-outline-info w-100">Ver Recibo (S3)</a>
+                    <div class="card p-4 h-100">
+                        <h6 class="text-white-50 mb-1">Reporte de pago</h6>
+                        <h5 class="text-white mb-3">${item.user.name}</h5>
+                        <div class="bg-dark p-3 rounded-3 mb-3 border border-secondary border-opacity-25">
+                            <h3 class="text-info mb-0 text-center">$${item.payment.amount}</h3>
                         </div>
-                        <div class="d-flex gap-2">
-                            <button class="btn btn-danger w-50" onclick="actionPayment('${item.payment.id}', 'reject', this)">FALSO</button>
-                            <button class="btn btn-success w-50" onclick="actionPayment('${item.payment.id}', 'approve', this)">LIQUIDAR</button>
+                        <p class="mb-1 text-white-50 small">Método: <span class="text-white">${item.payment.method}</span></p>
+                        <p class="mb-3 text-white-50 small">Referencia: <span class="text-white">${item.payment.reference}</span></p>
+                        <div class="mb-4">
+                            <a href="${item.payment.receipt_url}" target="_blank" class="btn btn-sm btn-outline-info w-100 rounded-3">Ver Comprobante Adjunto</a>
+                        </div>
+                        <div class="d-flex gap-2 mt-auto">
+                            <button class="btn btn-danger flex-fill rounded-3 fw-bold" onclick="actionPayment('${item.payment.id}', 'reject', this)">RECHAZAR</button>
+                            <button class="btn btn-success flex-fill rounded-3 fw-bold" onclick="actionPayment('${item.payment.id}', 'approve', this)">LIQUIDAR PAGO</button>
                         </div>
                     </div>
                 </div>
@@ -176,22 +259,22 @@
 
         function renderMorosidad(loans) {
             const container = document.getElementById('morosidad-list');
-            if(!loans || loans.length === 0) { container.innerHTML = '<p class="text-white-50">Sistema sano. No hay deudas vencidas.</p>'; return; }
+            if(!loans || loans.length === 0) { container.innerHTML = '<div class="col-12 text-center py-5"><h5 class="text-white-50">Sistema sano. No hay deudas vencidas actualmente.</h5></div>'; return; }
             
             container.innerHTML = loans.map(loan => `
                 <div class="col-md-4 mb-4">
-                    <div class="card p-3 border border-danger">
-                        <h5 class="text-danger">ID de Préstamo:</h5>
-                        <p class="text-white-50" style="font-size: 0.75rem;">${loan.id}</p>
-                        <h3 class="text-white mt-2">Deuda: $${loan.amount}</h3>
-                        <p class="mb-0 text-white-50">Venció el: ${new Date(loan.due_date).toLocaleDateString()}</p>
+                    <div class="card p-4 border border-danger border-opacity-50 h-100">
+                        <h6 class="text-danger mb-1">Préstamo Vencido</h6>
+                        <p class="text-white-50 mb-3" style="font-size: 0.70rem; word-break: break-all;">ID: ${loan.id}</p>
+                        <h2 class="text-white mb-1">$${loan.amount}</h2>
+                        <p class="mb-0 text-danger small fw-bold">Venció el: ${new Date(loan.due_date).toLocaleDateString()}</p>
                     </div>
                 </div>
             `).join('');
         }
 
         async function actionKyc(id, action, btn) {
-            if(!confirm(`¿Estás seguro de ${action === 'approve' ? 'APROBAR' : 'RECHAZAR'} este perfil?`)) return;
+            if(!confirm(`¿Confirmas que deseas ${action === 'approve' ? 'APROBAR' : 'RECHAZAR'} a este usuario?`)) return;
             btn.disabled = true;
             btn.innerText = "Procesando...";
 
@@ -208,7 +291,7 @@
         }
 
         async function actionPayment(id, action, btn) {
-            if(!confirm(`¿Estás seguro de ${action === 'approve' ? 'LIQUIDAR' : 'RECHAZAR'} este pago?`)) return;
+            if(!confirm(`¿Confirmas que deseas ${action === 'approve' ? 'LIQUIDAR' : 'RECHAZAR'} este reporte de pago?`)) return;
             btn.disabled = true;
             btn.innerText = "Procesando...";
 
@@ -225,7 +308,7 @@
         }
 
         async function aplicarPenalidad(btn) {
-            if(!confirm('¿Estás seguro de castigar con 10% de mora a TODOS los préstamos vencidos mostrados abajo?')) return;
+            if(!confirm('ATENCIÓN: Esto aplicará un 10% de recargo matemático a todos los préstamos vencidos en esta lista. ¿Proceder?')) return;
             btn.disabled = true;
             btn.innerText = "Aplicando castigo...";
 
