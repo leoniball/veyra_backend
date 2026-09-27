@@ -753,6 +753,29 @@ def report_payment():
 # RUTAS DE ADMINISTRACIÓN (BACKOFFICE)
 # ==========================================
 
+@app.route('/api/admin/users/all', methods=['GET'])
+@jwt_required()
+def get_all_users_admin():
+    admin = User.query.get(get_jwt_identity())
+    if not admin or not is_admin(admin): 
+        return jsonify({'error': 'Acceso Administrativo Denegado'}), 403
+
+    all_users = User.query.order_by(User.name).all()
+    
+    users_data = []
+    for u in all_users:
+        user_dict = u.to_dict()
+        
+        user_loans = Loan.query.filter_by(user_id=u.id).order_by(Loan.due_date.desc()).all()
+        user_dict['loan_history'] = [l.to_dict() for l in user_loans]
+        
+        user_payments = Payment.query.filter_by(user_id=u.id).order_by(Payment.created_at.desc()).all()
+        user_dict['payment_history'] = [p.to_dict() for p in user_payments]
+        
+        users_data.append(user_dict)
+
+    return jsonify({'users': users_data}), 200
+
 @app.route('/api/admin/dashboard', methods=['GET'])
 @jwt_required()
 def admin_dashboard():
