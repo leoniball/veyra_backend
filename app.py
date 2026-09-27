@@ -2,7 +2,7 @@ import os
 import uuid
 import random
 import smtplib
-import requests  # Necesario para consultar la tasa BCV
+import requests  
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
@@ -53,7 +53,8 @@ def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 # --- SEGURIDAD: LISTA BLANCA DE ADMINISTRADORES ---
-ADMIN_EMAILS = ['lodavidvera@gmail.com', 'denisperez@veyramoney.com'] # Correos con poder absoluto
+# Solo estos correos tendrán acceso al portal web.
+ADMIN_EMAILS = ['lodavidvera@gmail.com', 'jaycarvajal8@gmail.com', 'danperezc2003@gmail.com']
 
 def is_admin(user):
     return user.email in ADMIN_EMAILS
@@ -250,8 +251,8 @@ class User(db.Model):
             'email': self.email,
             'creditLevel': self.creditLevel,
             'maxCreditAllowed': self.maxCreditAllowed,
-            'current_debt': current_debt, # INYECCIÓN CRÍTICA PARA FLUTTER
-            'hasActiveLoan': current_debt > 0, # ESTADO DINÁMICO
+            'current_debt': current_debt,
+            'hasActiveLoan': current_debt > 0, 
             'is_verified': self.is_verified,
             'kyc_status': self.kyc_status,
             'cedula_front_url': self.cedula_front_url,
@@ -333,12 +334,12 @@ class Payment(db.Model):
     loan_id = db.Column(db.String(100), db.ForeignKey('loans.id'), nullable=False)
     user_id = db.Column(db.String(100), db.ForeignKey('users.id'), nullable=False)
     
-    amount = db.Column(db.Float, nullable=False, default=0.0) # NUEVO: MONTO DE ABONO
+    amount = db.Column(db.Float, nullable=False, default=0.0)
     payment_method = db.Column(db.String(50), nullable=False)
     reference_number = db.Column(db.String(100), nullable=False)
     receipt_url = db.Column(db.String(255), nullable=False)
     
-    status = db.Column(db.String(20), default='pending') # pending, approved, rejected
+    status = db.Column(db.String(20), default='pending')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def to_dict(self):
@@ -671,7 +672,6 @@ def create_loan():
 
     if not user: return jsonify({'error': 'Usuario inválido'}), 404
 
-    # LÓGICA DE ROTACIÓN: Valida si la suma del préstamo anterior + el nuevo supera el límite.
     current_debt = sum(l.amount for l in user.loans if l.status == 'active')
     if current_debt + requested_amount > user.maxCreditAllowed:
         return jsonify({'error': 'Fondos insuficientes. Límite de crédito excedido.'}), 400
@@ -711,7 +711,6 @@ def report_payment():
     payment_method = request.form.get('payment_method', 'transferencia')
     reference_number = request.form.get('reference_number', '')
     
-    # RECEPCIÓN DEL MONTO EXACTO QUE EL CLIENTE ELIGIÓ PAGAR
     try:
         amount_paid = float(request.form.get('amount', 0))
     except ValueError:
@@ -730,14 +729,12 @@ def report_payment():
             s3_client.upload_fileobj(file, S3_BUCKET, filename, ExtraArgs={"ContentType": file.content_type})
             receipt_url = f"https://{S3_BUCKET}.s3.{S3_REGION}.amazonaws.com/{filename}"
             
-            # Buscamos un préstamo activo para asociar el recibo, pero NO le cambiamos el estado.
-            # El estado 'active' debe mantenerse para que la deuda siga reflejándose hasta que el admin audite el pago.
             loan = Loan.query.filter_by(user_id=current_user_id, status='active').order_by(Loan.due_date).first()
             if loan:
                 new_payment = Payment(
                     loan_id=loan.id,
                     user_id=user.id,
-                    amount=amount_paid, # SE REGISTRA EL MONTO EXACTO
+                    amount=amount_paid,
                     payment_method=payment_method,
                     reference_number=reference_number,
                     receipt_url=receipt_url
@@ -745,7 +742,7 @@ def report_payment():
                 db.session.add(new_payment)
             
             db.session.commit()
-            return jsonify({'message': 'Pago reportado con éxito. En revisión militar.', 'receipt_url': receipt_url}), 200
+            return jsonify({'message': 'Pago reportado con éxito. En revisión administrativa.', 'receipt_url': receipt_url}), 200
             
         except NoCredentialsError: return jsonify({'error': 'Credenciales de AWS no válidas'}), 500
         except Exception as e: return jsonify({'error': f'Error subiendo comprobante: {str(e)}'}), 500
@@ -753,7 +750,7 @@ def report_payment():
     return jsonify({'error': 'Tipo de archivo no permitido'}), 400
 
 # ==========================================
-# RUTAS DE ADMINISTRACIÓN (BACKOFFICE MILITAR)
+# RUTAS DE ADMINISTRACIÓN (BACKOFFICE)
 # ==========================================
 
 @app.route('/api/admin/dashboard', methods=['GET'])
@@ -812,7 +809,6 @@ def review_payment(payment_id):
         payment.status = 'approved'
         amount_to_apply = payment.amount
         
-        # MOTOR DE AMORTIZACIÓN FIFO: Aplica el dinero descontando de los préstamos activos más antiguos primero
         active_loans = Loan.query.filter_by(user_id=user.id, status='active').order_by(Loan.due_date).all()
         for loan in active_loans:
             if amount_to_apply <= 0: 
