@@ -768,11 +768,15 @@ def trigger_morosidad():
     return jsonify({'message': f'Penalización de mora aplicada a {len(expired_loans)} deudores.'}), 200
 
 # ==========================================
-# RUTA WEB DEL PANEL ADMINISTRATIVO
+# RUTAS WEB (FRONTEND FLASK)
 # ==========================================
 @app.route('/backoffice', methods=['GET'])
 def render_backoffice():
     return render_template('admin_dashboard.html')
+
+@app.route('/privacidad', methods=['GET'])
+def politicas_privacidad():
+    return render_template('privacidad.html')
 
 # Inicialización de la base de datos
 with app.app_context():
