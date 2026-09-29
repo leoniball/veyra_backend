@@ -6,11 +6,11 @@
     <title>Política de Privacidad - Veyra Money</title>
     <style>
         :root {
-            --bg-color: #0f172a; /* Fondo oscuro general */
-            --container-bg: #1e293b; /* Fondo de la tarjeta central */
-            --text-main: #f8fafc; /* Texto principal claro */
-            --text-muted: #94a3b8; /* Texto secundario */
-            --accent: #10b981; /* Verde financiero corporativo */
+            --bg-color: #0f172a; 
+            --container-bg: #1e293b; 
+            --text-main: #f8fafc; 
+            --text-muted: #94a3b8; 
+            --accent: #10b981; 
         }
         body {
             font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
@@ -21,12 +21,11 @@
             padding: 60px 20px;
             position: relative;
         }
-        /* Configuración del logotipo en la esquina superior derecha */
         .header-logo {
             position: absolute;
             top: 30px;
             right: 40px;
-            height: 80px; /* Tamaño ajustado para visibilidad */
+            height: 80px; 
             width: auto;
             border-radius: 12px;
             box-shadow: 0 4px 6px rgba(0,0,0,0.3);
@@ -48,7 +47,7 @@
             margin-top: 0;
             border-bottom: 1px solid #334155;
             padding-bottom: 15px;
-            padding-right: 90px; /* Evita que el texto choque con el logo en pantallas medianas */
+            padding-right: 90px; 
         }
         h2 {
             color: #e2e8f0;
@@ -76,7 +75,13 @@
             color: #64748b;
             margin-bottom: 30px;
         }
-        /* Responsividad para móviles */
+        .highlight-box {
+            background-color: #0f172a;
+            border-left: 4px solid var(--accent);
+            padding: 15px 20px;
+            margin: 20px 0;
+            border-radius: 0 8px 8px 0;
+        }
         @media (max-width: 768px) {
             .header-logo {
                 position: relative;
@@ -93,7 +98,6 @@
 </head>
 <body>
 
-    <!-- Flask renderizará automáticamente la ruta a la carpeta static -->
     <img src="{{ url_for('static', filename='logo_veyra.jpg') }}" alt="Veyra Money Logo" class="header-logo">
 
     <div class="container">
@@ -118,12 +122,26 @@
         </ul>
 
         <h2>3. Almacenamiento y Seguridad de los Datos</h2>
-        <p>Garantizamos que los documentos KYC y los datos sensibles se transmiten mediante protocolos seguros y se almacenan de forma encriptada en nuestra infraestructura en la nube (AWS S3). Hemos implementado políticas estrictas de control de acceso para proteger su información contra alteraciones, pérdidas o accesos no autorizados.</p>
+        <p>Garantizamos que los documentos KYC y los datos sensibles se transmiten mediante protocolos seguros HTTPS y se almacenan de forma encriptada en nuestra infraestructura en la nube (AWS S3). Hemos implementado políticas estrictas de control de acceso para proteger su información contra alteraciones, pérdidas o accesos no autorizados.</p>
 
         <h2>4. Compartición de Información</h2>
-        <p>Veyra Money no vende, alquila ni comercializa su información personal. Los datos solo podrán ser compartidos ante un requerimiento legal formal por parte de las autoridades competentes en Venezuela, o con proveedores de infraestructura tecnológica bajo acuerdos estrictos de confidencialidad.</p>
+        <p>Veyra Money no vende, alquila ni comercializa su información personal. Los datos solo podrán ser compartidos ante un requerimiento legal formal por parte de las autoridades competentes en Venezuela, o con proveedores de infraestructura tecnológica bajo acuerdos estrictos de confidencialidad y procesamiento de datos.</p>
 
-        <h2>5. Contacto</h2>
+        <h2>5. Eliminación de Cuenta y Datos de Usuario</h2>
+        <p>Usted tiene el derecho de solicitar la eliminación definitiva de su cuenta y de los datos personales asociados a ella. Para ejercer este derecho, siga estos pasos:</p>
+        
+        <div class="highlight-box">
+            <p style="margin: 0;"><strong>Cómo solicitar la eliminación:</strong> Envíe un correo electrónico a <strong>thejaydis2026@gmail.com</strong> desde la dirección de correo registrada en su cuenta de Veyra Money, con el asunto <em>"Solicitud de Eliminación de Cuenta"</em>. Por favor, incluya su nombre completo y número de documento de identidad en el cuerpo del correo para validar la titularidad.</p>
+        </div>
+
+        <p><strong>Condiciones y Retención de Datos:</strong></p>
+        <ul>
+            <li><strong>Sin deudas activas:</strong> Si usted no mantiene ningún préstamo activo ni deudas pendientes con Veyra Money, procederemos a eliminar sus credenciales de acceso, perfil y documentos KYC asociados en un plazo máximo de 30 días hábiles.</li>
+            <li><strong>Con deudas activas:</strong> No se procesarán solicitudes de eliminación de cuenta si el usuario mantiene un crédito activo o en estado de morosidad. La deuda debe ser liquidada primero.</li>
+            <li><strong>Cumplimiento normativo:</strong> Por razones estrictas de seguridad, prevención de fraude, auditoría y cumplimiento de las regulaciones financieras locales, retendremos un registro encriptado de su historial transaccional e identidad por el tiempo que exija la ley aplicable tras la cancelación de la cuenta, tras lo cual será destruido permanentemente.</li>
+        </ul>
+
+        <h2>6. Contacto</h2>
         <p>Si tiene preguntas, auditorías o requerimientos sobre el manejo de sus datos en esta Política de Privacidad, por favor contáctenos a través del correo oficial: <a href="mailto:thejaydis2026@gmail.com">thejaydis2026@gmail.com</a></p>
     </div>
 
