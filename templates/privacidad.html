@@ -2,32 +2,130 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Política de Privacidad - Veyra Money</title>
+    <style>
+        :root {
+            --bg-color: #0f172a; /* Fondo oscuro general */
+            --container-bg: #1e293b; /* Fondo de la tarjeta central */
+            --text-main: #f8fafc; /* Texto principal claro */
+            --text-muted: #94a3b8; /* Texto secundario */
+            --accent: #10b981; /* Verde financiero corporativo */
+        }
+        body {
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            line-height: 1.6;
+            margin: 0;
+            padding: 60px 20px;
+            position: relative;
+        }
+        /* Configuración del logotipo en la esquina superior derecha */
+        .header-logo {
+            position: absolute;
+            top: 30px;
+            right: 40px;
+            height: 80px; /* Tamaño ajustado para visibilidad */
+            width: auto;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: var(--container-bg);
+            padding: 40px 50px;
+            border-radius: 12px;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+            border: 1px solid #334155;
+            position: relative;
+            z-index: 1;
+        }
+        h1 {
+            color: var(--accent);
+            font-size: 2.2em;
+            margin-top: 0;
+            border-bottom: 1px solid #334155;
+            padding-bottom: 15px;
+            padding-right: 90px; /* Evita que el texto choque con el logo en pantallas medianas */
+        }
+        h2 {
+            color: #e2e8f0;
+            margin-top: 35px;
+            font-size: 1.4em;
+        }
+        p, li {
+            color: var(--text-muted);
+            font-size: 1.05em;
+        }
+        ul {
+            margin-top: 10px;
+        }
+        a {
+            color: var(--accent);
+            text-decoration: none;
+            font-weight: 500;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+        .last-updated {
+            font-style: italic;
+            font-size: 0.9em;
+            color: #64748b;
+            margin-bottom: 30px;
+        }
+        /* Responsividad para móviles */
+        @media (max-width: 768px) {
+            .header-logo {
+                position: relative;
+                top: 0;
+                right: 0;
+                display: block;
+                margin: 0 auto 20px auto;
+            }
+            body { padding: 20px 10px; }
+            .container { padding: 25px; }
+            h1 { padding-right: 0; font-size: 1.8em; text-align: center; }
+        }
+    </style>
 </head>
 <body>
-    <h1>Política de Privacidad de Veyra Money</h1>
-    <p>Última actualización: 29 de septiembre de 2026</p>
-    <p>Veyra Money ("nosotros", "nuestro" o "la aplicación") se compromete a proteger la privacidad de sus usuarios. Esta Política de Privacidad explica cómo recopilamos, usamos, divulgamos y salvaguardamos su información cuando utiliza nuestra aplicación móvil.</p>
 
-    <h2>1. Recopilación de la Información</h2>
-    <p>Recopilamos información personal que usted nos proporciona voluntariamente al registrarse en la aplicación, incluyendo pero no limitado a: Nombre completo, dirección de correo electrónico, número de teléfono, documentos de identidad (Cédula, RIF), fotografías (selfies) para el proceso KYC (Conoce a tu Cliente) y datos financieros para la gestión de préstamos.</p>
+    <!-- Flask renderizará automáticamente la ruta a la carpeta static -->
+    <img src="{{ url_for('static', filename='logo_veyra.jpg') }}" alt="Veyra Money Logo" class="header-logo">
 
-    <h2>2. Uso de la Información</h2>
-    <p>Utilizamos la información recopilada para:</p>
-    <ul>
-        <li>Procesar y gestionar solicitudes de microcréditos.</li>
-        <li>Verificar su identidad y prevenir el fraude.</li>
-        <li>Comunicarnos con usted respecto a su cuenta y estado de préstamos.</li>
-        <li>Cumplir con las obligaciones legales y regulatorias aplicables en Venezuela.</li>
-    </ul>
+    <div class="container">
+        <h1>Política de Privacidad de Veyra Money</h1>
+        <p class="last-updated">Última actualización: 29 de septiembre de 2026</p>
+        <p>Veyra Money ("nosotros", "nuestro" o "la aplicación") se compromete a proteger la privacidad de sus usuarios. Esta Política de Privacidad explica cómo recopilamos, usamos, divulgamos y salvaguardamos su información cuando utiliza nuestra aplicación móvil y servicios financieros.</p>
 
-    <h2>3. Almacenamiento y Seguridad de los Datos</h2>
-    <p>Los documentos KYC y datos sensibles se transmiten de forma segura y se almacenan en servidores en la nube (AWS S3) con encriptación. Implementamos medidas de seguridad técnicas y organizativas para proteger su información personal contra el acceso no autorizado, alteración o destrucción.</p>
+        <h2>1. Recopilación de la Información</h2>
+        <p>Recopilamos información personal que usted nos proporciona voluntariamente al registrarse en la plataforma, incluyendo de manera estricta:</p>
+        <ul>
+            <li>Datos de identidad: Nombre completo, número de teléfono, correo electrónico.</li>
+            <li>Documentación KYC (Conoce a tu Cliente): Cédula de Identidad, RIF y fotografías de verificación biométrica (selfie) transmitidas a nuestros servidores.</li>
+            <li>Datos financieros: Referencias bancarias e historial de pagos de microcréditos.</li>
+        </ul>
 
-    <h2>4. Compartir Información</h2>
-    <p>No vendemos, alquilamos ni comercializamos su información personal con terceros. Podemos compartir su información solo cuando sea requerido por ley o con proveedores de servicios de confianza bajo acuerdos estrictos de confidencialidad que nos asisten en la operación de la plataforma.</p>
+        <h2>2. Uso de la Información</h2>
+        <p>Utilizamos la información recopilada exclusivamente para:</p>
+        <ul>
+            <li>Procesar, auditar y gestionar las solicitudes y liquidaciones de microcréditos.</li>
+            <li>Verificar su identidad, prevenir el fraude y evitar la suplantación.</li>
+            <li>Comunicarnos con usted mediante alertas automáticas respecto al estado de su cuenta y fechas de vencimiento.</li>
+        </ul>
 
-    <h2>5. Contacto</h2>
-    <p>Si tiene preguntas sobre esta Política de Privacidad, por favor contáctenos a: [TU_CORREO_ELECTRONICO_AQUI]</p>
+        <h2>3. Almacenamiento y Seguridad de los Datos</h2>
+        <p>Garantizamos que los documentos KYC y los datos sensibles se transmiten mediante protocolos seguros y se almacenan de forma encriptada en nuestra infraestructura en la nube (AWS S3). Hemos implementado políticas estrictas de control de acceso para proteger su información contra alteraciones, pérdidas o accesos no autorizados.</p>
+
+        <h2>4. Compartición de Información</h2>
+        <p>Veyra Money no vende, alquila ni comercializa su información personal. Los datos solo podrán ser compartidos ante un requerimiento legal formal por parte de las autoridades competentes en Venezuela, o con proveedores de infraestructura tecnológica bajo acuerdos estrictos de confidencialidad.</p>
+
+        <h2>5. Contacto</h2>
+        <p>Si tiene preguntas, auditorías o requerimientos sobre el manejo de sus datos en esta Política de Privacidad, por favor contáctenos a través del correo oficial: <a href="mailto:thejaydis2026@gmail.com">thejaydis2026@gmail.com</a></p>
+    </div>
+
 </body>
 </html>
