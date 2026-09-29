@@ -129,42 +129,6 @@ def send_reset_email(to_email, code):
         print(f"Error enviando correo de recuperación: {e}")
         return False
 
-def send_guarantor_email(to_email, code, user_name):
-    sender_email = os.getenv('MAIL_USERNAME')
-    sender_password = os.getenv('MAIL_PASSWORD')
-    
-    if not sender_email or not sender_password:
-        return False
-
-    msg = MIMEMultipart()
-    msg['From'] = f"Veyra Money <{sender_email}>"
-    msg['To'] = to_email
-    msg['Subject'] = "Solicitud de Fiador - Veyra Money"
-    
-    body = f"""
-    Hola,
-
-    {user_name} te ha agregado como fiador solidario en Veyra Money.
-    
-    Para confirmar tu identidad y aceptar, proporciona el siguiente código al solicitante:
-    
-    {code}
-    
-    Si no conoces a esta persona, ignora este mensaje.
-    """
-    msg.attach(MIMEText(body, 'plain'))
-
-    try:
-        server = smtplib.SMTP('smtp.gmail.com', 587)
-        server.starttls()
-        server.login(sender_email, sender_password)
-        server.send_message(msg)
-        server.quit()
-        return True
-    except Exception as e:
-        print(f"Error enviando correo al fiador: {e}")
-        return False
-
 def send_email_change_email(to_email, code):
     sender_email = os.getenv('MAIL_USERNAME')
     sender_password = os.getenv('MAIL_PASSWORD')
@@ -234,7 +198,6 @@ class User(db.Model):
     pm_bank = db.Column(db.String(100), nullable=True)
     
     loans = db.relationship('Loan', backref='user', lazy=True)
-    guarantors = db.relationship('Guarantor', backref='user', lazy=True, cascade="all, delete-orphan")
     payments = db.relationship('Payment', backref='user', lazy=True) 
 
     def to_dict(self):
@@ -266,7 +229,6 @@ class User(db.Model):
                 'phone': self.pm_phone,
                 'bank': self.pm_bank
             },
-            'guarantors': [g.to_dict() for g in self.guarantors],
             'is_admin': is_admin(self) 
         }
 
@@ -275,32 +237,6 @@ class User(db.Model):
 
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
-
-
-class Guarantor(db.Model):
-    __tablename__ = 'guarantors'
-    
-    id = db.Column(db.String(100), primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id = db.Column(db.String(100), db.ForeignKey('users.id'), nullable=False)
-    
-    name = db.Column(db.String(150), nullable=False)
-    cedula = db.Column(db.String(50), nullable=False)
-    emergency_phone = db.Column(db.String(50), nullable=False)
-    email = db.Column(db.String(120), nullable=False)
-    
-    is_email_verified = db.Column(db.Boolean, default=False)
-    verification_code = db.Column(db.String(6), nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-
-    def to_dict(self):
-        return {
-            'id': self.id,
-            'name': self.name,
-            'cedula': self.cedula,
-            'emergency_phone': self.emergency_phone,
-            'email': self.email,
-            'is_email_verified': self.is_email_verified
-        }
 
 
 class Loan(db.Model):
@@ -552,58 +488,13 @@ def update_payment_data():
     user.pm_phone = data['pm_phone']
     user.pm_bank = data['pm_bank']
     
-    if user.kyc_status == 'pending': user.kyc_status = 'in_progress'
+    # AL ELIMINAR LOS FIADORES, ESTE ES EL PASO FINAL DEL KYC.
+    # El usuario pasa directamente a 'pending_admin' para ser revisado por ti.
+    if user.kyc_status in ['pending', 'in_progress']: 
+        user.kyc_status = 'pending_admin'
         
     db.session.commit()
-    return jsonify({'message': 'Datos de desembolso actualizados', 'user': user.to_dict()}), 200
-
-@app.route('/api/kyc/guarantor', methods=['POST'])
-@jwt_required()
-def add_guarantor():
-    current_user_id = get_jwt_identity()
-    user = User.query.get(current_user_id)
-    data = request.get_json()
-
-    required_fields = ['name', 'cedula', 'emergency_phone', 'email']
-    if not all(field in data for field in required_fields): return jsonify({'error': 'Datos del fiador incompletos'}), 400
-
-    if len(user.guarantors) >= 2: return jsonify({'error': 'Ya has registrado el máximo de 2 fiadores'}), 400
-
-    otp_code = str(random.randint(100000, 999999))
-    
-    new_guarantor = Guarantor(
-        user_id=current_user_id, name=data['name'], cedula=data['cedula'], emergency_phone=data['emergency_phone'],
-        email=data['email'], verification_code=otp_code
-    )
-    
-    db.session.add(new_guarantor)
-    db.session.commit()
-
-    send_guarantor_email(new_guarantor.email, otp_code, f"{user.name} {user.lastName}")
-    return jsonify({'message': 'Fiador registrado. Se ha enviado un código a su correo.', 'guarantor_id': new_guarantor.id}), 201
-
-@app.route('/api/kyc/guarantor/verify', methods=['POST'])
-@jwt_required()
-def verify_guarantor():
-    data = request.get_json()
-    if not data or 'guarantor_id' not in data or 'code' not in data: return jsonify({'error': 'Faltan datos'}), 400
-
-    guarantor = Guarantor.query.get(data['guarantor_id'])
-    if not guarantor: return jsonify({'error': 'Fiador no encontrado'}), 404
-
-    if guarantor.verification_code != data['code']: return jsonify({'error': 'Código incorrecto'}), 400
-
-    guarantor.is_email_verified = True
-    guarantor.verification_code = None
-    
-    user = User.query.get(guarantor.user_id)
-    verified_guarantors = [g for g in user.guarantors if g.is_email_verified]
-    
-    if len(verified_guarantors) >= 2 and user.kyc_status != 'verified':
-        user.kyc_status = 'pending_admin'
-
-    db.session.commit()
-    return jsonify({'message': 'Fiador verificado exitosamente. Esperando revisión militar.'}), 200
+    return jsonify({'message': 'Datos de desembolso actualizados y perfil en revisión administrativa', 'user': user.to_dict()}), 200
 
 @app.route('/api/kyc/upload', methods=['POST'])
 @jwt_required()
@@ -638,6 +529,11 @@ def upload_kyc_document():
             else: return jsonify({'error': 'Tipo de documento no válido'}), 400
                 
             user.last_kyc_update = datetime.utcnow()
+            
+            # Cambiar el estado a in_progress al subir fotos si estaba en pending
+            if user.kyc_status == 'pending':
+                user.kyc_status = 'in_progress'
+
             db.session.commit()
             return jsonify({'message': 'Archivo subido a S3 correctamente', 'url': file_url}), 200
             
@@ -658,9 +554,6 @@ def create_loan():
     
     if user.kyc_status != 'verified':
         return jsonify({'error': 'Debes completar tu perfil y esperar aprobación administrativa antes de solicitar un préstamo.'}), 403
-        
-    verified_guarantors = [g for g in user.guarantors if g.is_email_verified]
-    if len(verified_guarantors) < 2: return jsonify({'error': 'Debes registrar y verificar los correos de al menos 2 fiadores solidarios.'}), 403
 
     if not data or 'amount' not in data or 'due_date' not in data: return jsonify({'error': 'Faltan datos del préstamo'}), 400
         

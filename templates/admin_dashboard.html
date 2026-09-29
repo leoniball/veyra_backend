@@ -287,7 +287,6 @@
             }
         }
 
-        // --- RENDERIZADO DE MÓDULOS EXISTENTES ---
         function renderKyc(users) {
             const container = document.getElementById('kyc-list');
             if(!users || users.length === 0) { container.innerHTML = '<div class="col-12 text-center py-5"><h5 class="text-white-50">No hay perfiles pendientes de auditoría.</h5></div>'; return; }
@@ -353,7 +352,6 @@
             `).join('');
         }
 
-        // --- RENDERIZADO DEL NUEVO DIRECTORIO GLOBAL ---
         function renderDirectory(users) {
             const tbody = document.getElementById('directorio-list');
             if(!users || users.length === 0) { 
@@ -402,7 +400,6 @@
             document.getElementById('expedienteTitle').innerText = `Expediente: ${user.name} ${user.lastName}`;
             const body = document.getElementById('expedienteBody');
             
-            // Unir y ordenar transacciones (Préstamos vs Pagos)
             let transacciones = [];
             user.loan_history.forEach(l => {
                 transacciones.push({
@@ -426,13 +423,6 @@
                     </div>
                 `;
             } else { kycDocs = '<span class="text-white-50 small">Sin documentos adjuntos</span>'; }
-
-            let fiadores = user.guarantors.map(g => `
-                <div class="small text-white-50 border-bottom border-secondary border-opacity-25 pb-1 mb-1">
-                    <span class="text-white">${g.name}</span> (C.I: ${g.cedula}) - Telf: ${g.emergency_phone} 
-                    [${g.is_email_verified ? '<span class="text-success">Validado</span>' : '<span class="text-danger">Pendiente</span>'}]
-                </div>
-            `).join('') || '<span class="text-white-50 small">Sin fiadores registrados</span>';
 
             let txList = transacciones.map(tx => {
                 let badgeClass = tx.isAbono ? 'bg-success' : 'bg-danger';
@@ -468,11 +458,6 @@
                     </div>
                 </div>
 
-                <div class="expediente-seccion">
-                    <h6 class="text-info border-bottom border-info border-opacity-25 pb-2 mb-3">Fiadores Solidarios</h6>
-                    ${fiadores}
-                </div>
-
                 <div class="expediente-seccion bg-transparent border-0 px-0">
                     <h6 class="text-info pb-2 mb-3">Línea de Tiempo (Historial)</h6>
                     ${txList}
@@ -483,7 +468,6 @@
             myModal.show();
         }
 
-        // --- ACCIONES EXISTENTES ---
         async function actionKyc(id, action, btn) {
             if(!confirm(`¿Confirmas que deseas ${action === 'approve' ? 'APROBAR' : 'RECHAZAR'} a este usuario?`)) return;
             btn.disabled = true;
@@ -499,7 +483,7 @@
             const data = await res.json();
             alert(data.message);
             loadData();
-            loadDirectory(); // Actualiza también el directorio
+            loadDirectory(); 
         }
 
         async function actionPayment(id, action, btn) {
