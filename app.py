@@ -60,12 +60,16 @@ def is_admin(user):
     return user.email in ADMIN_EMAILS
 
 # ==========================================
-# MOTOR DE INTEGRACIÓN BNC
+# MOTOR DE INTEGRACIÓN BNC (CON IP ESTÁTICA)
 # ==========================================
+def get_bnc_proxies():
+    """ Enruta la salida a través de QuotaGuard para tener IP Estática frente al BNC """
+    proxy_url = os.getenv('QUOTAGUARDSTATIC_URL')
+    return {"http": proxy_url, "https": proxy_url} if proxy_url else None
+
 def get_bnc_token():
     """
     Autentica con BNC usando Login/Password y devuelve el Token JWT temporal.
-    Requiere que configures BNC_URL_AUTH, BNC_LOGIN y BNC_PASSWORD en Render.
     """
     url = os.getenv('BNC_URL_AUTH')
     payload = {
@@ -73,9 +77,8 @@ def get_bnc_token():
         "Password": os.getenv('BNC_PASSWORD')
     }
     try:
-        response = requests.post(url, json=payload, timeout=10)
+        response = requests.post(url, json=payload, proxies=get_bnc_proxies(), timeout=15)
         if response.status_code == 200:
-            # Según documentación, el token es un string plano
             return response.text.strip()
         else:
             print(f"Error BNC Auth: {response.text}")
@@ -609,7 +612,7 @@ def create_loan():
     if not bnc_token:
         return jsonify({'error': 'Servicio interbancario no disponible temporalmente. Intente más tarde.'}), 503
 
-    # 2. Ejecutar Emisión de Pago Móvil en BNC
+    # 2. Ejecutar Emisión de Pago Móvil en BNC agregando el proxy de salida
     emision_url = os.getenv('BNC_URL_EMISION')
     emision_payload = {
         "monto": requested_amount,
@@ -621,7 +624,7 @@ def create_loan():
     headers = {"Authorization": f"Bearer {bnc_token}"}
     
     try:
-        response = requests.post(emision_url, json=emision_payload, headers=headers, timeout=15)
+        response = requests.post(emision_url, json=emision_payload, headers=headers, proxies=get_bnc_proxies(), timeout=15)
         bnc_data = response.json()
         
         # 3. Validar si el banco procesó el pago con éxito
@@ -684,7 +687,7 @@ def process_c2p_payment():
     headers = {"Authorization": f"Bearer {bnc_token}"}
 
     try:
-        response = requests.post(c2p_url, json=c2p_payload, headers=headers, timeout=15)
+        response = requests.post(c2p_url, json=c2p_payload, headers=headers, proxies=get_bnc_proxies(), timeout=15)
         bnc_data = response.json()
         
         if response.status_code == 200 and bnc_data.get('codigoRespuesta') == '00':
@@ -783,14 +786,32 @@ def report_payment():
 
 
 # ==========================================
-# WEBHOOK BNC OBLIGATORIO (Notificaciones)
+# WEBHOOK BNC OBLIGATORIO (Notificaciones SNP)
 # ==========================================
+@app.route('/api/bnc/auth', methods=['POST'])
+def bnc_webhook_auth():
+    """ 
+    Ruta requerida por el Formulario SNP. 
+    BNC consumirá esto para obtener permiso de enviarte notificaciones.
+    """
+    data = request.get_json() or {}
+    
+    if data.get("Login") == "VeyraBNC" and data.get("Password") == "VeyraBNC2026*":
+        token = create_access_token(identity="bnc_system", expires_delta=timedelta(days=365))
+        return token, 200
+        
+    return "No autorizado", 401
+
 @app.route('/api/bnc/webhook', methods=['POST'])
+@jwt_required()
 def bnc_webhook():
     """ 
-    Ruta pasiva que exige BNC en el formulario.
-    Aquí BNC envía avisos si alguien te hace un pago móvil normal. 
+    Ruta donde BNC envía los pagos recibidos pasivamente.
+    El header debe traer: Authorization: Bearer <token>
     """
+    if get_jwt_identity() != "bnc_system":
+        return jsonify({"error": "Acceso denegado"}), 403
+        
     data = request.get_json()
     return jsonify({"status": "Recibido"}), 200
 
