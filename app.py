@@ -59,6 +59,32 @@ ADMIN_EMAILS = ['lodavidvera@gmail.com', 'jaycarvajal8@gmail.com', 'danperezc200
 def is_admin(user):
     return user.email in ADMIN_EMAILS
 
+# ==========================================
+# MOTOR DE INTEGRACIÓN BNC
+# ==========================================
+def get_bnc_token():
+    """
+    Autentica con BNC usando Login/Password y devuelve el Token JWT temporal.
+    Requiere que configures BNC_URL_AUTH, BNC_LOGIN y BNC_PASSWORD en Render.
+    """
+    url = os.getenv('BNC_URL_AUTH')
+    payload = {
+        "Login": os.getenv('BNC_LOGIN'),
+        "Password": os.getenv('BNC_PASSWORD')
+    }
+    try:
+        response = requests.post(url, json=payload, timeout=10)
+        if response.status_code == 200:
+            # Según documentación, el token es un string plano
+            return response.text.strip()
+        else:
+            print(f"Error BNC Auth: {response.text}")
+            return None
+    except Exception as e:
+        print(f"Excepción BNC Auth: {e}")
+        return None
+
+
 # --- FUNCIONES PARA ENVIAR CORREOS ---
 def send_verification_email(to_email, code):
     sender_email = os.getenv('MAIL_USERNAME')
@@ -250,6 +276,10 @@ class Loan(db.Model):
     
     status = db.Column(db.String(20), default='active') 
     receipt_url = db.Column(db.String(255), nullable=True)
+    
+    # Campo añadido para cumplir normativa BNC de comprobantes
+    bnc_reference = db.Column(db.String(100), nullable=True)
+    
     payments = db.relationship('Payment', backref='loan', lazy=True)
 
     def to_dict(self):
@@ -261,6 +291,7 @@ class Loan(db.Model):
             'due_date': self.due_date.isoformat(),
             'status': self.status,
             'receipt_url': self.receipt_url,
+            'bnc_reference': self.bnc_reference,
             'payment_history': [p.to_dict() for p in self.payments]
         }
 
@@ -273,7 +304,9 @@ class Payment(db.Model):
     amount = db.Column(db.Float, nullable=False, default=0.0)
     payment_method = db.Column(db.String(50), nullable=False)
     reference_number = db.Column(db.String(100), nullable=False)
-    receipt_url = db.Column(db.String(255), nullable=False)
+    
+    # Modificado a nullable=True porque los pagos C2P no llevan imagen
+    receipt_url = db.Column(db.String(255), nullable=True)
     
     status = db.Column(db.String(20), default='pending')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -488,8 +521,6 @@ def update_payment_data():
     user.pm_phone = data['pm_phone']
     user.pm_bank = data['pm_bank']
     
-    # AL ELIMINAR LOS FIADORES, ESTE ES EL PASO FINAL DEL KYC.
-    # El usuario pasa directamente a 'pending_admin' para ser revisado por ti.
     if user.kyc_status in ['pending', 'in_progress']: 
         user.kyc_status = 'pending_admin'
         
@@ -530,7 +561,6 @@ def upload_kyc_document():
                 
             user.last_kyc_update = datetime.utcnow()
             
-            # Cambiar el estado a in_progress al subir fotos si estaba en pending
             if user.kyc_status == 'pending':
                 user.kyc_status = 'in_progress'
 
@@ -544,7 +574,9 @@ def upload_kyc_document():
 
     return jsonify({'error': 'Tipo de archivo no permitido'}), 400
 
-# --- PRÉSTAMOS ROTATIVOS Y PAGOS EXACTOS ---
+# ==========================================
+# PRÉSTAMOS ROTATIVOS (Desembolso BNC Automatizado)
+# ==========================================
 @app.route('/api/loans', methods=['POST'])
 @jwt_required()
 def create_loan():
@@ -569,16 +601,47 @@ def create_loan():
     if current_debt + requested_amount > user.maxCreditAllowed:
         return jsonify({'error': 'Fondos insuficientes. Límite de crédito excedido.'}), 400
 
-    new_loan = Loan(user_id=current_user_id, amount=requested_amount, interest_rate=float(data.get('interest_rate', 0.15)), due_date=due_date)
-    user.hasActiveLoan = True
+    if not user.pm_phone or not user.pm_bank or not user.pm_cedula:
+        return jsonify({'error': 'No tienes configurados los datos de Pago Móvil para recibir el dinero.'}), 400
 
+    # 1. Solicitar Token BNC
+    bnc_token = get_bnc_token()
+    if not bnc_token:
+        return jsonify({'error': 'Servicio interbancario no disponible temporalmente. Intente más tarde.'}), 503
+
+    # 2. Ejecutar Emisión de Pago Móvil en BNC
+    emision_url = os.getenv('BNC_URL_EMISION')
+    emision_payload = {
+        "monto": requested_amount,
+        "telefono_destino": user.pm_phone,
+        "cedula_destino": user.pm_cedula,
+        "banco_destino": user.pm_bank,
+        "concepto": f"Desembolso Veyra"
+    }
+    headers = {"Authorization": f"Bearer {bnc_token}"}
+    
     try:
-        db.session.add(new_loan)
-        db.session.commit()
-        return jsonify(new_loan.to_dict()), 201
+        response = requests.post(emision_url, json=emision_payload, headers=headers, timeout=15)
+        bnc_data = response.json()
+        
+        # 3. Validar si el banco procesó el pago con éxito
+        if response.status_code == 200 and bnc_data.get('codigoRespuesta') == '00':
+            new_loan = Loan(
+                user_id=current_user_id, amount=requested_amount, 
+                interest_rate=float(data.get('interest_rate', 0.15)), 
+                due_date=due_date,
+                bnc_reference=bnc_data.get('referencia', 'REF-GENERADA')
+            )
+            user.hasActiveLoan = True
+            db.session.add(new_loan)
+            db.session.commit()
+            return jsonify(new_loan.to_dict()), 201
+        else:
+            return jsonify({'error': f"Rechazo bancario: {bnc_data.get('mensajeError', 'Desconocido')}"}), 400
+
     except Exception as e:
-        db.session.rollback()
-        return jsonify({'error': 'Error interno al crear el préstamo'}), 500
+        return jsonify({'error': f'Falla de conexión con la red interbancaria: {str(e)}'}), 500
+
 
 @app.route('/api/loans/me', methods=['GET'])
 @jwt_required()
@@ -587,6 +650,82 @@ def get_my_loans():
     loans = Loan.query.filter_by(user_id=current_user_id).all()
     return jsonify([loan.to_dict() for loan in loans]), 200
 
+# ==========================================
+# COBRO AUTOMATIZADO (C2P BNC)
+# ==========================================
+@app.route('/api/loans/pay/c2p', methods=['POST'])
+@jwt_required()
+def process_c2p_payment():
+    """ Nuevo endpoint 100% automatizado mediante C2P """
+    current_user_id = get_jwt_identity()
+    user = User.query.get(current_user_id)
+    data = request.get_json()
+    
+    amount_paid = float(data.get('amount', 0))
+    token_c2p = data.get('token_c2p') # Clave generada por el usuario en su banco
+    banco_origen = data.get('bank')
+    telefono_origen = data.get('phone')
+    cedula_origen = data.get('cedula')
+
+    if not all([amount_paid, token_c2p, banco_origen, telefono_origen, cedula_origen]):
+        return jsonify({'error': 'Faltan datos (Monto, Banco, Cédula, Teléfono o Token C2P)'}), 400
+
+    bnc_token = get_bnc_token()
+    if not bnc_token: return jsonify({'error': 'Error interno de autenticación bancaria.'}), 503
+
+    c2p_url = os.getenv('BNC_URL_C2P')
+    c2p_payload = {
+        "monto": amount_paid,
+        "telefono_origen": telefono_origen,
+        "cedula_origen": cedula_origen,
+        "banco_origen": banco_origen,
+        "token_c2p": token_c2p
+    }
+    headers = {"Authorization": f"Bearer {bnc_token}"}
+
+    try:
+        response = requests.post(c2p_url, json=c2p_payload, headers=headers, timeout=15)
+        bnc_data = response.json()
+        
+        if response.status_code == 200 and bnc_data.get('codigoRespuesta') == '00':
+            referencia_bnc = bnc_data.get('referencia', f'C2P-{int(datetime.utcnow().timestamp())}')
+            
+            loan = Loan.query.filter_by(user_id=current_user_id, status='active').order_by(Loan.due_date).first()
+            if not loan: return jsonify({'error': 'Transacción exitosa, pero no se encontró préstamo activo.'}), 400
+
+            new_payment = Payment(
+                loan_id=loan.id, user_id=user.id, amount=amount_paid, 
+                payment_method='C2P BNC', reference_number=referencia_bnc, 
+                status='approved', receipt_url=None
+            )
+            db.session.add(new_payment)
+            
+            amount_to_apply = amount_paid
+            active_loans = Loan.query.filter_by(user_id=user.id, status='active').order_by(Loan.due_date).all()
+            for l in active_loans:
+                if amount_to_apply <= 0: break
+                if l.amount <= amount_to_apply:
+                    amount_to_apply -= l.amount
+                    l.amount = 0
+                    l.status = 'liquidated'
+                else:
+                    l.amount -= amount_to_apply
+                    amount_to_apply = 0
+                    
+            if sum(l.amount for l in user.loans if l.status == 'active') <= 0:
+                user.hasActiveLoan = False 
+                
+            db.session.commit()
+            return jsonify({'message': 'Cobro procesado exitosamente. Deuda liquidada.', 'referencia': referencia_bnc}), 200
+        else:
+            return jsonify({'error': f"El banco rechazó el cobro: {bnc_data.get('mensajeError', 'Token inválido o fondos insuficientes')}"}), 400
+
+    except Exception as e:
+        return jsonify({'error': f'Falla de conexión interbancaria: {str(e)}'}), 500
+
+# ==========================================
+# REPORTE DE PAGO MANUAL (Mantenido intacto para S3)
+# ==========================================
 @app.route('/api/loans/pay', methods=['POST'])
 @jwt_required()
 def report_payment():
@@ -641,6 +780,20 @@ def report_payment():
         except Exception as e: return jsonify({'error': f'Error subiendo comprobante: {str(e)}'}), 500
 
     return jsonify({'error': 'Tipo de archivo no permitido'}), 400
+
+
+# ==========================================
+# WEBHOOK BNC OBLIGATORIO (Notificaciones)
+# ==========================================
+@app.route('/api/bnc/webhook', methods=['POST'])
+def bnc_webhook():
+    """ 
+    Ruta pasiva que exige BNC en el formulario.
+    Aquí BNC envía avisos si alguien te hace un pago móvil normal. 
+    """
+    data = request.get_json()
+    return jsonify({"status": "Recibido"}), 200
+
 
 # ==========================================
 # RUTAS DE ADMINISTRACIÓN (BACKOFFICE)
