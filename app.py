@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 from flask_cors import CORS
 import boto3
 from botocore.exceptions import NoCredentialsError
+import google.generativeai as genai
 
 # Cargar variables de entorno locales (Render usará las suyas automáticamente)
 load_dotenv()
@@ -37,6 +38,9 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
 
 db = SQLAlchemy(app)
 jwt = JWTManager(app)
+
+# --- CONFIGURACIÓN IA (GEMINI) ---
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 # --- CLIENTE AMAZON S3 ---
 s3_client = boto3.client(
@@ -814,6 +818,55 @@ def bnc_webhook():
         
     data = request.get_json()
     return jsonify({"status": "Recibido"}), 200
+
+
+# ==========================================
+# ENDPOINT DE INTELIGENCIA ARTIFICIAL (SOPORTE BNC)
+# ==========================================
+@app.route('/api/chat_soporte', methods=['POST'])
+@jwt_required()
+def chat_soporte():
+    current_user_id = get_jwt_identity()
+    user = User.query.get(current_user_id)
+    data = request.get_json()
+    
+    if not data or not data.get('message'):
+        return jsonify({'error': 'Mensaje vacío'}), 400
+        
+    user_message = data['message']
+    current_debt = sum(l.amount for l in user.loans if l.status == 'active')
+    
+    # Inyección de contexto financiero real del usuario a la IA
+    system_prompt = f"""
+    Eres el asistente virtual oficial de soporte técnico de 'Veyra Money', propiedad de THE JAYDI'S C.A.
+    Tu único objetivo es asistir a los usuarios con errores de la aplicación y problemas con el Banco Nacional de Crédito (BNC).
+    
+    Reglas operativas estrictas:
+    1. Sé empático, directo y resuelve el problema rápido.
+    2. Nunca reveles que eres una IA de Google o Gemini. Trabajas para THE JAYDI'S C.A.
+    3. Si el error es de "Token C2P", recuérdale al usuario que los tokens del BNC expiran a las 11:59 PM.
+    4. Si el error es por "Fondos Insuficientes", dile que verifique el saldo en su app del BNC.
+    5. Si te preguntan por límites de crédito, explica que aumentan automáticamente según su puntualidad de pago.
+    6. No inventes información legal ni prometas liberar fondos.
+    
+    Contexto financiero del usuario que te está hablando (Usa esta info para personalizar tu respuesta):
+    - Nombre: {user.name}
+    - Deuda actual: ${current_debt}
+    - Estado de verificación (KYC): {user.kyc_status}
+    - Límite de crédito actual: ${user.maxCreditAllowed}
+    """
+    
+    try:
+        model = genai.GenerativeModel(
+            'gemini-1.5-flash', 
+            system_instruction=system_prompt,
+            generation_config={"temperature": 0.3} # Temperatura baja para que sea preciso y no alucine
+        )
+        response = model.generate_content(user_message)
+        return jsonify({'reply': response.text}), 200
+    except Exception as e:
+        print(f"Error AI: {e}")
+        return jsonify({'error': 'Nuestro sistema de soporte automático está saturado. Intenta de nuevo en unos minutos.'}), 500
 
 
 # ==========================================
