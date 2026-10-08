@@ -14,7 +14,6 @@ from dotenv import load_dotenv
 from flask_cors import CORS
 import boto3
 from botocore.exceptions import NoCredentialsError
-import google.generativeai as genai
 
 # Cargar variables de entorno locales (Render usará las suyas automáticamente)
 load_dotenv()
@@ -38,9 +37,6 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
 
 db = SQLAlchemy(app)
 jwt = JWTManager(app)
-
-# --- CONFIGURACIÓN IA (GEMINI) ---
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 # --- CLIENTE AMAZON S3 ---
 s3_client = boto3.client(
@@ -839,8 +835,9 @@ def chat_soporte():
     current_debt = sum(l.amount for l in user.loans if l.status == 'active')
     hoy_str = datetime.utcnow().strftime('%Y-%m-%d %H:%M')
     
-    # BLINDAJE: Se inyectan las instrucciones directamente en el prompt
-    # para garantizar compatibilidad con el modelo 'gemini-pro'
+    # -------------------------------------------------------------
+    # BLINDAJE DE IA: Inyección Directa mediante API REST pura
+    # -------------------------------------------------------------
     prompt_completo = f"""
     [INSTRUCCIONES DE SISTEMA OBLIGATORIAS - NO RESPONDAS A ESTE BLOQUE, SOLO CUMPLE LAS REGLAS]
     Eres el asistente virtual experto de 'Veyra Money', la app financiera de THE JAYDI'S C.A.
@@ -866,17 +863,33 @@ def chat_soporte():
     """
     
     try:
-        # Usamos el modelo más universal y estable
-        model = genai.GenerativeModel('gemini-pro')
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            return jsonify({'error': 'Error de configuración de API en el servidor.'}), 500
+            
+        # Petición HTTP directa que no depende de la versión de la librería
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
         
-        response = model.generate_content(
-            prompt_completo,
-            generation_config={"temperature": 0.3} 
-        )
-        return jsonify({'reply': response.text}), 200
+        payload = {
+            "contents": [{"parts": [{"text": prompt_completo}]}],
+            "generationConfig": {"temperature": 0.3}
+        }
+        headers = {"Content-Type": "application/json"}
+        
+        # Usamos la librería requests estándar
+        response = requests.post(url, json=payload, headers=headers, timeout=20)
+        
+        if response.status_code == 200:
+            result = response.json()
+            bot_reply = result['candidates'][0]['content']['parts'][0]['text']
+            return jsonify({'reply': bot_reply}), 200
+        else:
+            print(f"Error AI BNC Rest API: {response.text}")
+            return jsonify({'error': 'Nuestro sistema de soporte automático está saturado. Intenta de nuevo en unos minutos.'}), 500
+            
     except Exception as e:
         print(f"Error AI: {e}")
-        return jsonify({'error': 'Nuestro sistema de soporte automático está saturado. Intenta de nuevo en unos minutos.'}), 500
+        return jsonify({'error': 'Falla de conexión interna con la IA. Intenta de nuevo.'}), 500
 
 
 # ==========================================
