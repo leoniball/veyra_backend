@@ -867,7 +867,8 @@ def chat_soporte():
         if not api_key:
             return jsonify({'error': 'Error de configuración de API en el servidor.'}), 500
             
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+        # URL DIRIGIDA AL MODELO PRO (Incluido en la capa gratuita de API Studio)
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={api_key}"
         
         payload = {
             "contents": [{"parts": [{"text": prompt_completo}]}],
@@ -882,7 +883,7 @@ def chat_soporte():
             bot_reply = result['candidates'][0]['content']['parts'][0]['text']
             return jsonify({'reply': bot_reply}), 200
         else:
-            print(f"Error AI BNC Rest API: {response.text}")
+            print(f"Error Google AI: {response.text}")
             return jsonify({'error': 'Nuestro sistema de soporte automático está saturado. Intenta de nuevo en unos minutos.'}), 500
             
     except Exception as e:
