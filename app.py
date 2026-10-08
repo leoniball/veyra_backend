@@ -819,7 +819,7 @@ def bnc_webhook():
 
 
 # ==========================================
-# ENDPOINT DE INTELIGENCIA ARTIFICIAL (SOPORTE BNC)
+# ENDPOINT DE INTELIGENCIA ARTIFICIAL (MIGRADO A OPENROUTER)
 # ==========================================
 @app.route('/api/chat_soporte', methods=['POST'])
 @jwt_required()
@@ -836,10 +836,9 @@ def chat_soporte():
     hoy_str = datetime.utcnow().strftime('%Y-%m-%d %H:%M')
     
     # -------------------------------------------------------------
-    # BLINDAJE DE IA: Inyección Directa mediante API REST pura
+    # EL CEREBRO AHORA ES OPENROUTER (SIN BLOQUEOS DE REGIÓN)
     # -------------------------------------------------------------
     prompt_completo = f"""
-    [INSTRUCCIONES DE SISTEMA OBLIGATORIAS - NO RESPONDAS A ESTE BLOQUE, SOLO CUMPLE LAS REGLAS]
     Eres el asistente virtual experto de 'Veyra Money', la app financiera de THE JAYDI'S C.A.
     Tu objetivo es guiar a los usuarios dentro de la aplicación y ayudar con errores de pagos (especialmente BNC).
     
@@ -848,47 +847,50 @@ def chat_soporte():
     - Deuda actual: ${current_debt}
     - Límite de crédito total: ${user.maxCreditAllowed}
     - Estado KYC (Verificación): {user.kyc_status}
-    - Fecha y hora actual del servidor: {hoy_str}
+    - Fecha actual: {hoy_str}
     
-    Reglas de comportamiento:
-    1. Eres un empleado de THE JAYDI'S C.A., nunca digas que eres una IA de Google.
-    2. NO PUEDES ejecutar acciones (no puedes aprobar préstamos ni procesar pagos). Solo eres un asesor.
-    3. SI PIDEN UN PRÉSTAMO: Diles su límite de ${user.maxCreditAllowed} y diles: "Ve a la pestaña 'Inicio', usa el control deslizante azul para elegir el monto y presiona el botón 'CONFIRMAR PRÉSTAMO'".
-    4. SI QUIEREN PAGAR: Diles que deben ${current_debt} y diles: "Ve a la pestaña 'Pagos' y selecciona Pago Móvil C2P BNC para hacer el cobro automático con tu token".
-    5. ERRORES C2P: Recuerda que los tokens del BNC expiran a las 11:59 PM.
-    6. Sé siempre directo y resolutivo.
-    
-    [A CONTINUACIÓN EL MENSAJE REAL DEL USUARIO, RESPÓNDELE A ESTO:]
-    Usuario dice: "{user_message}"
+    Reglas:
+    1. Trabajas para THE JAYDI'S C.A. Nunca digas que eres una IA de Google, Meta, etc.
+    2. NO PUEDES ejecutar acciones (no apruebas préstamos ni cobras pagos).
+    3. PRÉSTAMO: Diles su límite de ${user.maxCreditAllowed}. Diles: "Ve a la pestaña 'Inicio', usa el slider azul y presiona 'CONFIRMAR PRÉSTAMO'".
+    4. PAGO: Diles que deben ${current_debt}. Diles: "Ve a la pestaña 'Pagos' y selecciona Pago Móvil C2P BNC".
+    5. Sé amable, directo y sin rodeos.
     """
     
     try:
-        api_key = os.getenv("GEMINI_API_KEY")
+        api_key = os.getenv("OPENROUTER_API_KEY")
         if not api_key:
-            return jsonify({'error': 'Error de configuración de API en el servidor.'}), 500
+            return jsonify({'error': 'Falta configurar OPENROUTER_API_KEY en el servidor.'}), 500
             
-        # URL DIRIGIDA AL MODELO GRATUITO FLASH
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+        url = "https://openrouter.ai/api/v1/chat/completions"
         
         payload = {
-            "contents": [{"parts": [{"text": prompt_completo}]}],
-            "generationConfig": {"temperature": 0.3}
+            "model": "meta-llama/llama-3.1-8b-instruct:free", # Modelo libre garantizado
+            "messages": [
+                {"role": "system", "content": prompt_completo},
+                {"role": "user", "content": user_message}
+            ],
+            "temperature": 0.3
         }
-        headers = {"Content-Type": "application/json"}
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "HTTP-Referer": "https://veyra-backend-tamy.onrender.com", 
+            "Content-Type": "application/json"
+        }
         
         response = requests.post(url, json=payload, headers=headers, timeout=20)
         
         if response.status_code == 200:
             result = response.json()
-            bot_reply = result['candidates'][0]['content']['parts'][0]['text']
+            bot_reply = result['choices'][0]['message']['content']
             return jsonify({'reply': bot_reply}), 200
         else:
-            print(f"Error Google AI: {response.text}")
+            print(f"Error OpenRouter AI: {response.text}")
             return jsonify({'error': 'Nuestro sistema de soporte automático está saturado. Intenta de nuevo en unos minutos.'}), 500
             
     except Exception as e:
-        print(f"Error AI: {e}")
-        return jsonify({'error': 'Falla de conexión interna con la IA. Intenta de nuevo.'}), 500
+        print(f"Error interno IA: {e}")
+        return jsonify({'error': 'Falla de conexión interna con el asistente. Intenta de nuevo.'}), 500
 
 
 # ==========================================
