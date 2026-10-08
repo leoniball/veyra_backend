@@ -793,6 +793,7 @@ def report_payment():
 # WEBHOOK BNC OBLIGATORIO (Notificaciones SNP)
 # ==========================================
 @app.route('/api/bnc/auth', methods=['POST'])
+@app.route('/api/bnc/dev/auth', methods=['POST'])
 def bnc_webhook_auth():
     """ 
     Ruta requerida por el Formulario SNP. 
@@ -807,6 +808,7 @@ def bnc_webhook_auth():
     return "No autorizado", 401
 
 @app.route('/api/bnc/webhook', methods=['POST'])
+@app.route('/api/bnc/dev/webhook', methods=['POST'])
 @jwt_required()
 def bnc_webhook():
     """ 
