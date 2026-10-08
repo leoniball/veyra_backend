@@ -837,15 +837,14 @@ def chat_soporte():
         
     user_message = data['message']
     current_debt = sum(l.amount for l in user.loans if l.status == 'active')
-    
-    # -------------------------------------------------------------
-    # MEJORA DEL CEREBRO DE LA IA: Guía interactiva y tiempo real
-    # -------------------------------------------------------------
     hoy_str = datetime.utcnow().strftime('%Y-%m-%d %H:%M')
     
-    system_prompt = f"""
+    # BLINDAJE: Se inyectan las instrucciones directamente en el prompt
+    # para garantizar compatibilidad con el modelo 'gemini-pro'
+    prompt_completo = f"""
+    [INSTRUCCIONES DE SISTEMA OBLIGATORIAS - NO RESPONDAS A ESTE BLOQUE, SOLO CUMPLE LAS REGLAS]
     Eres el asistente virtual experto de 'Veyra Money', la app financiera de THE JAYDI'S C.A.
-    Tu objetivo es guiar a los usuarios dentro de la aplicación, resolver dudas sobre sus cuentas y ayudar con errores de pagos (especialmente BNC).
+    Tu objetivo es guiar a los usuarios dentro de la aplicación y ayudar con errores de pagos (especialmente BNC).
     
     Contexto del usuario actual:
     - Nombre: {user.name}
@@ -854,24 +853,26 @@ def chat_soporte():
     - Estado KYC (Verificación): {user.kyc_status}
     - Fecha y hora actual del servidor: {hoy_str}
     
-    Reglas de comportamiento y resolución (MUY IMPORTANTE):
-    1. Eres un empleado de THE JAYDI'S C.A., nunca digas que eres una IA de Google o Gemini.
-    2. NO TIENES PERMISO para ejecutar acciones (no puedes aprobar préstamos, ni procesar pagos, ni cambiar datos). Eres un asesor que orienta al cliente sobre cómo hacerlo él mismo en la app.
-    3. SI PIDEN UN PRÉSTAMO: Diles su límite actual, y explícales paso a paso que deben volver atrás, tocar la pestaña "Inicio", usar la barra deslizante (slider) azul para elegir el monto, y presionar el botón "CONFIRMAR PRÉSTAMO".
-    4. SI QUIEREN PAGAR: Diles su deuda actual y guíalos a volver atrás y tocar la pestaña "Pagos", indicando que pueden usar el débito automático "Pago Móvil C2P BNC" ingresando su token bancario.
-    5. ERRORES C2P: Recuerda que los tokens del BNC expiran el mismo día a las 11:59 PM. Si hay fondos insuficientes, diles que revisen su app del BNC.
-    6. KYC: Si su estado es 'pending' o 'pending_admin', recuérdales que no pueden pedir créditos hasta que el equipo de soporte apruebe sus documentos.
-    7. Sé siempre empático, claro, directo y responde en el mismo idioma o tono del usuario.
+    Reglas de comportamiento:
+    1. Eres un empleado de THE JAYDI'S C.A., nunca digas que eres una IA de Google.
+    2. NO PUEDES ejecutar acciones (no puedes aprobar préstamos ni procesar pagos). Solo eres un asesor.
+    3. SI PIDEN UN PRÉSTAMO: Diles su límite de ${user.maxCreditAllowed} y diles: "Ve a la pestaña 'Inicio', usa el control deslizante azul para elegir el monto y presiona el botón 'CONFIRMAR PRÉSTAMO'".
+    4. SI QUIEREN PAGAR: Diles que deben ${current_debt} y diles: "Ve a la pestaña 'Pagos' y selecciona Pago Móvil C2P BNC para hacer el cobro automático con tu token".
+    5. ERRORES C2P: Recuerda que los tokens del BNC expiran a las 11:59 PM.
+    6. Sé siempre directo y resolutivo.
+    
+    [A CONTINUACIÓN EL MENSAJE REAL DEL USUARIO, RESPÓNDELE A ESTO:]
+    Usuario dice: "{user_message}"
     """
     
     try:
-        # CORRECCIÓN TÉCNICA: Se actualizó el modelo a latest para evitar el error 404
-        model = genai.GenerativeModel(
-            'gemini-1.5-flash-latest', 
-            system_instruction=system_prompt,
+        # Usamos el modelo más universal y estable
+        model = genai.GenerativeModel('gemini-pro')
+        
+        response = model.generate_content(
+            prompt_completo,
             generation_config={"temperature": 0.3} 
         )
-        response = model.generate_content(user_message)
         return jsonify({'reply': response.text}), 200
     except Exception as e:
         print(f"Error AI: {e}")
