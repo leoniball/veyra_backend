@@ -867,7 +867,6 @@ def chat_soporte():
         if not api_key:
             return jsonify({'error': 'Error de configuración de API en el servidor.'}), 500
             
-        # Petición HTTP directa que no depende de la versión de la librería
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
         
         payload = {
@@ -876,7 +875,6 @@ def chat_soporte():
         }
         headers = {"Content-Type": "application/json"}
         
-        # Usamos la librería requests estándar
         response = requests.post(url, json=payload, headers=headers, timeout=20)
         
         if response.status_code == 200:
