@@ -867,8 +867,8 @@ def chat_soporte():
         if not api_key:
             return jsonify({'error': 'Error de configuración de API en el servidor.'}), 500
             
-        # URL DIRIGIDA AL MODELO PRO (Incluido en la capa gratuita de API Studio)
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={api_key}"
+        # URL DIRIGIDA AL MODELO GRATUITO FLASH
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
         
         payload = {
             "contents": [{"parts": [{"text": prompt_completo}]}],
