@@ -867,8 +867,8 @@ def chat_soporte():
         if not api_key:
             return jsonify({'error': 'Error de configuración de API en el servidor.'}), 500
             
-        # Petición HTTP directa que no depende de la versión de la librería
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+        # CORRECCIÓN DEFINITIVA: URL corregida al modelo 'gemini-pro' universal
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={api_key}"
         
         payload = {
             "contents": [{"parts": [{"text": prompt_completo}]}],
